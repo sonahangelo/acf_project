@@ -23,3 +23,6 @@ whitelist:
   - "127.0.0.21"
 db_path: "data/acf.db"
 model_path: "models/anomaly_model.pkl"
+# Hybrid rule z-score threshold for scan detection
+scan_zscore_threshold: 3.0
+scan_min_distinct_ports: 5

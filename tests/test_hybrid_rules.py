@@ -63,10 +63,21 @@ def test_scan_rule_still_triggers_via_zscore():
     model = _fake_model_explain({"scan_distinct_ports": 7.4, "scan_pps": 10.1})
     feats = {"syn_count": 0, "port_repeat_count": 0, "flow_byte_count": 0,
               "flow_duration": 0, "scan_pps": 200, "scan_distinct_ports": 50}
-    cfg = {}
+    cfg = {"scan_zscore_threshold": 3.0, "scan_min_distinct_ports": 5}
     triggered, reason = check_hybrid_rules(feats, model, [0]*12, cfg)
     assert triggered
     assert "port_scan" in reason
+
+
+def test_scan_threshold_is_config_driven():
+    """A z-score that would trigger under default 3.0 should NOT trigger
+    if config raises the threshold higher."""
+    model = _fake_model_explain({"scan_distinct_ports": 3.5, "scan_pps": 3.5})
+    feats = {"syn_count": 0, "port_repeat_count": 0, "flow_byte_count": 0,
+              "flow_duration": 0, "scan_pps": 50, "scan_distinct_ports": 10}
+    cfg = {"scan_zscore_threshold": 10.0, "scan_min_distinct_ports": 5}  # much stricter
+    triggered, reason = check_hybrid_rules(feats, model, [0]*12, cfg)
+    assert not triggered
 
 
 def test_nothing_triggers_on_ordinary_traffic():
@@ -112,6 +123,6 @@ def test_high_scan_pps_alone_is_not_labeled_a_scan():
     model = _fake_model_explain({"scan_distinct_ports": 0.1, "scan_pps": 9.5})
     feats = {"syn_count": 0, "port_repeat_count": 0, "flow_byte_count": 0,
               "flow_duration": 0, "scan_pps": 90.0, "scan_distinct_ports": 1}
-    cfg = {}
+    cfg = {"scan_zscore_threshold": 3.0, "scan_min_distinct_ports": 5}
     triggered, reason = check_hybrid_rules(feats, model, [0]*12, cfg)
     assert not triggered

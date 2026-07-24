@@ -48,7 +48,10 @@ def check_hybrid_rules(feats, model, vector, cfg):
     # A real scan needs BOTH: many distinct ports AND a high rate.
     # High scan_pps alone (e.g. rapid DNS queries, all to port 53) isn't a
     # scan -- it's just a burst to one destination.
-    if z_by_name.get("scan_distinct_ports", 0) > 3.0 and feats.get("scan_distinct_ports", 0) >= 5:
+    scan_z_threshold = cfg.get("scan_zscore_threshold", 3.0)
+    scan_min_ports = cfg.get("scan_min_distinct_ports", 5)
+    if (z_by_name.get("scan_distinct_ports", 0) > scan_z_threshold
+            and feats.get("scan_distinct_ports", 0) >= scan_min_ports):
         return True, f"port_scan (scan_pps={feats.get('scan_pps')}, distinct_ports={feats.get('scan_distinct_ports')})"
 
     syn_threshold = cfg.get("syn_flood_threshold", 20)
