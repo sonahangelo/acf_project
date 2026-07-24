@@ -1,41 +1,34 @@
 """
-alerting.py -- Logging & Alerting
-
-Writes traffic feature rows and decision alerts to CSV (SQLite/DB swap-in
-comes later per the roadmap -- CSV is fine for the MVP).
+alerting.py -- Logging & Alerting (SQLite-backed)
 """
 
-import csv
-import os
+from db import insert_row, TRAFFIC_COLUMNS
 
 
-def _write_row(path, row_dict):
-    file_exists = os.path.exists(path)
-    os.makedirs(os.path.dirname(path), exist_ok=True) if os.path.dirname(path) else None
-    with open(path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(row_dict.keys()))
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow(row_dict)
+def log_traffic(conn, feature_dict):
+    row = {col: feature_dict.get(col) for col in TRAFFIC_COLUMNS}
+    insert_row(conn, "traffic", row)
 
 
-def log_traffic(csv_path, feature_dict):
-    _write_row(csv_path, feature_dict)
-
-
-def log_alert(csv_path, feature_dict, action, score, explanation=None):
-    row = dict(feature_dict)
+def log_alert(conn, feature_dict, action, score, explanation=None):
+    from db import TRAFFIC_COLUMNS
+    row = {col: feature_dict.get(col) for col in TRAFFIC_COLUMNS}
     row["action"] = action
     row["score"] = score
+    row["top_reasons"] = None
+    row["rule_reason"] = feature_dict.get("rule_reason")
+
     if explanation:
         row["top_reasons"] = "; ".join(
             f"{name}={value} ({dev:+.2f} std)" for name, value, dev in explanation
         )
-    _write_row(csv_path, row)
+
+    insert_row(conn, "alerts", row)
+
     if action == "BLOCK":
         reason_str = ""
-        if feature_dict.get("rule_reason"):
-            reason_str = f" -- {feature_dict['rule_reason']}"
+        if row["rule_reason"]:
+            reason_str = f" -- {row['rule_reason']}"
         elif explanation:
             top = explanation[0]
             reason_str = f" -- mainly due to {top[0]}={top[1]} ({top[2]:+.2f} std from normal)"

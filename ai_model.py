@@ -29,10 +29,13 @@ class AnomalyModel:
         self.feature_means = {}
         self.feature_stds = {}
 
-    def train(self, csv_path):
-        df = pd.read_csv(csv_path)
+    def train(self, db_path):
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        df = pd.read_sql_query("SELECT * FROM traffic", conn)
+        conn.close()
         if df.empty:
-            raise ValueError(f"No data found in {csv_path} -- capture some traffic first.")
+            raise ValueError(f"No data found in {db_path} -- capture some traffic first.")
 
         X = df[MODEL_FEATURE_COLUMNS].fillna(0)
 
@@ -108,9 +111,9 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--train", action="store_true", help="Train on data/traffic_log.csv")
-    parser.add_argument("--csv", default="data/traffic_log.csv")
+    parser.add_argument("--db", default="data/acf.db")
     args = parser.parse_args()
 
     if args.train:
         m = AnomalyModel()
-        m.train(args.csv)
+        m.train(args.db)

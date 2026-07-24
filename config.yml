@@ -22,6 +22,5 @@ exfil_min_duration_seconds: 5
 whitelist:
   - "127.0.0.1"
 
-traffic_log_csv: "data/traffic_log.csv"
-alerts_log_csv: "data/alerts_log.csv"
+db_path: "data/acf.db"
 model_path: "models/anomaly_model.pkl"

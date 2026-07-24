@@ -1,2 +1,0 @@
-timestamp,src_ip,dst_ip,src_port,dst_port,protocol,packet_length,tcp_flags,flow_duration,flow_packet_count,flow_byte_count,flow_pps,flow_bps,scan_distinct_ports,scan_pps,syn_count,port_repeat_count,rule_reason,action,score,top_reasons
-1784866036.949332,127.0.0.1,127.0.0.1,2595,80,TCP,54,S,0.017,2,108,118.52,6400.17,4,44.01,8,8,repeated_port_probe (attempts=8 to dst_port=80),BLOCK,0.08205409847548306,flow_pps=118.52 (+1.98 std); dst_port=80 (-1.01 std); flow_packet_count=2 (-1.01 std)
