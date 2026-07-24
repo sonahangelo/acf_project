@@ -59,3 +59,53 @@ def test_old_entries_fall_outside_scan_window():
     tracker.update(_pkt(ts=1000.0, dst_port=21))
     feats = tracker.update(_pkt(ts=1010.0, dst_port=22))  # 10s later, window is 5s
     assert feats["scan_distinct_ports"] == 1  # only the recent one counts
+
+
+def test_syn_flood_counted_correctly():
+    tracker = FlowTracker(syn_window_seconds=5)
+    for i in range(5):
+        feats = _pkt(ts=1000.0 + i * 0.1, dst_port=80)
+        feats["tcp_flags"] = "S"
+        result = tracker.update(feats)
+    assert result["syn_count"] == 5
+
+
+def test_non_syn_packets_dont_inflate_syn_count():
+    tracker = FlowTracker(syn_window_seconds=5)
+    feats = _pkt(ts=1000.0, dst_port=80)
+    feats["tcp_flags"] = "PA"  # established connection traffic, not a new attempt
+    result = tracker.update(feats)
+    assert result["syn_count"] == 0
+
+
+def test_syn_count_respects_window():
+    tracker = FlowTracker(syn_window_seconds=5)
+    old = _pkt(ts=1000.0, dst_port=80)
+    old["tcp_flags"] = "S"
+    tracker.update(old)
+
+    recent = _pkt(ts=1010.0, dst_port=80)  # 10s later, window is 5s
+    recent["tcp_flags"] = "S"
+    result = tracker.update(recent)
+    assert result["syn_count"] == 1  # old one should have expired
+
+
+def test_repeated_port_probe_counted():
+    tracker = FlowTracker(port_repeat_window_seconds=10)
+    for i in range(4):
+        feats = _pkt(ts=1000.0 + i * 0.5, dst_ip="9.9.9.9", dst_port=22)
+        feats["tcp_flags"] = "S"
+        result = tracker.update(feats)
+    assert result["port_repeat_count"] == 4
+
+
+def test_port_repeat_is_specific_to_one_endpoint():
+    tracker = FlowTracker(port_repeat_window_seconds=10)
+    a = _pkt(ts=1000.0, dst_ip="9.9.9.9", dst_port=22)
+    a["tcp_flags"] = "S"
+    tracker.update(a)
+
+    b = _pkt(ts=1000.1, dst_ip="9.9.9.9", dst_port=23)  # different port
+    b["tcp_flags"] = "S"
+    result = tracker.update(b)
+    assert result["port_repeat_count"] == 1  # separate counter per (src,dst,port)

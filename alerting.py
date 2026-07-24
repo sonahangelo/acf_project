@@ -34,7 +34,9 @@ def log_alert(csv_path, feature_dict, action, score, explanation=None):
     _write_row(csv_path, row)
     if action == "BLOCK":
         reason_str = ""
-        if explanation:
+        if feature_dict.get("rule_reason"):
+            reason_str = f" -- {feature_dict['rule_reason']}"
+        elif explanation:
             top = explanation[0]
             reason_str = f" -- mainly due to {top[0]}={top[1]} ({top[2]:+.2f} std from normal)"
         print(f"[alert] BLOCK {feature_dict['src_ip']} -> {feature_dict['dst_ip']} "

@@ -1,31 +1,27 @@
 # ACF Configuration
 
-# Network interface to sniff on. Leave blank ("") to let Scapy pick the default.
 interface: ""
-
-# BPF filter for capture (only capture IP traffic by default)
 bpf_filter: "ip"
-
-# Number of packets to buffer before writing to CSV/DB
 flush_every: 20
-
-# IsolationForest contamination rate (expected proportion of anomalies)
 contamination: 0.02
-
-# SAFETY: if true, decisions are logged but NOT enforced via iptables.
 dry_run: true
 
-# Sliding window (seconds) for scan detection (distinct ports per source IP)
 scan_window_seconds: 5
-
-# How long (seconds) of inactivity before a flow is considered finished/expired
 flow_timeout_seconds: 30
 
-# IPs that should NEVER be blocked (your own machine, gateway, admin box, etc.)
+syn_window_seconds: 5
+syn_flood_threshold: 20
+
+port_repeat_window_seconds: 10
+port_repeat_threshold: 8
+
+exfil_bytes_threshold: 5000000
+exfil_min_duration_seconds: 5
+
+# TEMP: empty for testing -- restore 127.0.0.1 afterward
 whitelist:
   - "127.0.0.1"
 
-# Paths
 traffic_log_csv: "data/traffic_log.csv"
 alerts_log_csv: "data/alerts_log.csv"
 model_path: "models/anomaly_model.pkl"
