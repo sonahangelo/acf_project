@@ -20,7 +20,9 @@ exfil_min_duration_seconds: 5
 
 # TEMP: empty for testing -- restore 127.0.0.1 afterward
 whitelist:
-  - "127.0.0.21"
+  - "127.0.0.1"
+  - "172.27.112.1"    # WSL gateway -- never block this
+  - "172.27.112.252"  # this machine's own WSL IP -- never block yourself
 db_path: "data/acf.db"
 model_path: "models/anomaly_model.pkl"
 # Hybrid rule z-score threshold for scan detection

@@ -89,31 +89,36 @@ def run_detect_mode(cfg):
     )
 
     def handle(pkt):
-        feats = extract_features(pkt)
-        if not feats:
-            return
+        try:
+            feats = extract_features(pkt)
+            if not feats:
+                return
 
-        feats.update(tracker.update(feats))
-        log_traffic(conn, feats)
+            feats.update(tracker.update(feats))
+            log_traffic(conn, feats)
 
-        vector = to_model_vector(feats)
-        label, score = model.predict(vector)
+            vector = to_model_vector(feats)
+            label, score = model.predict(vector)
 
-        rule_triggered, rule_reason = check_hybrid_rules(feats, model, vector, cfg)
-        effective_label = -1 if rule_triggered else label
+            rule_triggered, rule_reason = check_hybrid_rules(feats, model, vector, cfg)
+            effective_label = -1 if rule_triggered else label
 
-        flow_count_for_decision = None if rule_triggered else feats.get("flow_packet_count")
-        action = decide(effective_label, score, feats["src_ip"], whitelist,
-                         flow_packet_count=flow_count_for_decision)
+            flow_count_for_decision = None if rule_triggered else feats.get("flow_packet_count")
+            action = decide(effective_label, score, feats["src_ip"], whitelist,
+                             flow_packet_count=flow_count_for_decision)
 
-        if action == "BLOCK":
-            if feats["src_ip"] not in already_alerted:
-                top_explanation = model.explain(vector)
-                if rule_triggered:
-                    feats["rule_reason"] = rule_reason
-                log_alert(conn, feats, action, score, explanation=top_explanation)
-                already_alerted.add(feats["src_ip"])
-            block_ip(conn, feats["src_ip"], dry_run=dry_run, reason=feats.get("rule_reason", ""))
+            if action == "BLOCK":
+                if feats["src_ip"] not in already_alerted:
+                    top_explanation = model.explain(vector)
+                    if rule_triggered:
+                        feats["rule_reason"] = rule_reason
+                    log_alert(conn, feats, action, score, explanation=top_explanation)
+                    already_alerted.add(feats["src_ip"])
+                block_ip(conn, feats["src_ip"], dry_run=dry_run, reason=feats.get("rule_reason", ""))
+        except Exception as e:
+            import traceback
+            print(f"[main] ERROR in packet handler: {e}")
+            traceback.print_exc()
 
     mode_str = "DRY-RUN (no real blocking)" if dry_run else "LIVE (will modify iptables!)"
     print(f"[main] DETECT mode -- {mode_str}")
