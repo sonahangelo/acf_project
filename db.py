@@ -33,6 +33,14 @@ def init_db(conn):
             {traffic_cols_sql}
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS blocked_ips (
+            ip TEXT PRIMARY KEY,
+            blocked_at REAL,
+            reason TEXT,
+            dry_run INTEGER
+        )
+    """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_traffic_src_ip ON traffic(src_ip)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_traffic_timestamp ON traffic(timestamp)")
 

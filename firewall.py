@@ -1,45 +1,51 @@
 """
-firewall.py -- Firewall Controller
+firewall.py -- Firewall Controller (persistent)
 
-Applies iptables rules based on Decision Engine output.
-SAFETY: dry_run=True by default -- logs what it *would* do without
-actually touching iptables. Flip config.yml's dry_run to false only
-after testing in an isolated lab network.
+Blocks are recorded in the blocked_ips table so they survive restarts:
+no duplicate iptables rules after a restart, and no re-alerting on IPs
+already known to be blocked.
 """
 
 import subprocess
+import time
 
-_blocked_ips = set()
+
+def load_blocked_ips(conn):
+    """Returns a set of IPs currently recorded as blocked."""
+    rows = conn.execute("SELECT ip FROM blocked_ips").fetchall()
+    return {row[0] for row in rows}
 
 
-def block_ip(ip, dry_run=True):
-    if ip in _blocked_ips:
-        return  # already blocked, avoid duplicate rules
+def block_ip(conn, ip, dry_run=True, reason=""):
+    already = conn.execute("SELECT 1 FROM blocked_ips WHERE ip = ?", (ip,)).fetchone()
+    if already:
+        return  # already recorded as blocked, avoid duplicate rules
 
     if dry_run:
         print(f"[firewall][DRY-RUN] Would block {ip} (iptables -A INPUT -s {ip} -j DROP)")
-        _blocked_ips.add(ip)
-        return
-
-    cmd = ["sudo", "iptables", "-A", "INPUT", "-s", ip, "-j", "DROP"]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode == 0:
+    else:
+        cmd = ["sudo", "iptables", "-A", "INPUT", "-s", ip, "-j", "DROP"]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"[firewall] FAILED to block {ip}: {result.stderr.strip()}")
+            return
         print(f"[firewall] Blocked {ip}")
-        _blocked_ips.add(ip)
-    else:
-        print(f"[firewall] FAILED to block {ip}: {result.stderr.strip()}")
+
+    conn.execute(
+        "INSERT OR REPLACE INTO blocked_ips (ip, blocked_at, reason, dry_run) VALUES (?, ?, ?, ?)",
+        (ip, time.time(), reason, 1 if dry_run else 0),
+    )
 
 
-def unblock_ip(ip, dry_run=True):
-    if dry_run:
-        print(f"[firewall][DRY-RUN] Would unblock {ip}")
-        _blocked_ips.discard(ip)
-        return
-
-    cmd = ["sudo", "iptables", "-D", "INPUT", "-s", ip, "-j", "DROP"]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode == 0:
+def unblock_ip(conn, ip, dry_run=True):
+    if not dry_run:
+        cmd = ["sudo", "iptables", "-D", "INPUT", "-s", ip, "-j", "DROP"]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"[firewall] FAILED to unblock {ip}: {result.stderr.strip()}")
+            return
         print(f"[firewall] Unblocked {ip}")
-        _blocked_ips.discard(ip)
     else:
-        print(f"[firewall] FAILED to unblock {ip}: {result.stderr.strip()}")
+        print(f"[firewall][DRY-RUN] Would unblock {ip}")
+
+    conn.execute("DELETE FROM blocked_ips WHERE ip = ?", (ip,))

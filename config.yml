@@ -20,7 +20,6 @@ exfil_min_duration_seconds: 5
 
 # TEMP: empty for testing -- restore 127.0.0.1 afterward
 whitelist:
-  - "127.0.0.1"
-
+  - "127.0.0.21"
 db_path: "data/acf.db"
 model_path: "models/anomaly_model.pkl"

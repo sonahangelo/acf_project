@@ -101,3 +101,17 @@ def test_syn_flood_on_single_packet_flows_still_blocks():
     action = decide(label=-1, score=-0.1, src_ip="1.2.3.4", whitelist=set(),
                      flow_packet_count=flow_count_for_decision)
     assert action == "BLOCK"
+
+
+def test_high_scan_pps_alone_is_not_labeled_a_scan():
+    """
+    Regression test: a burst of traffic to ONE port (e.g. rapid DNS queries)
+    should not be labeled port_scan just because scan_pps is high -- a real
+    scan needs many DISTINCT ports, not just a high rate to one target.
+    """
+    model = _fake_model_explain({"scan_distinct_ports": 0.1, "scan_pps": 9.5})
+    feats = {"syn_count": 0, "port_repeat_count": 0, "flow_byte_count": 0,
+              "flow_duration": 0, "scan_pps": 90.0, "scan_distinct_ports": 1}
+    cfg = {}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*12, cfg)
+    assert not triggered

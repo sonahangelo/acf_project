@@ -12,7 +12,7 @@ from features import extract_features, to_model_vector
 from flow_tracker import FlowTracker
 from ai_model import AnomalyModel
 from decision import decide
-from firewall import block_ip
+from firewall import block_ip, load_blocked_ips
 from alerting import log_traffic, log_alert
 from utils import load_config
 from db import get_connection, init_db
@@ -45,7 +45,10 @@ def check_hybrid_rules(feats, model, vector, cfg):
     explanation = model.explain(vector, top_n=len(vector))
     z_by_name = {name: z for name, _, z in explanation}
 
-    if z_by_name.get("scan_distinct_ports", 0) > 3.0 or z_by_name.get("scan_pps", 0) > 3.0:
+    # A real scan needs BOTH: many distinct ports AND a high rate.
+    # High scan_pps alone (e.g. rapid DNS queries, all to port 53) isn't a
+    # scan -- it's just a burst to one destination.
+    if z_by_name.get("scan_distinct_ports", 0) > 3.0 and feats.get("scan_distinct_ports", 0) >= 5:
         return True, f"port_scan (scan_pps={feats.get('scan_pps')}, distinct_ports={feats.get('scan_distinct_ports')})"
 
     syn_threshold = cfg.get("syn_flood_threshold", 20)
@@ -72,7 +75,9 @@ def run_detect_mode(cfg):
     model = AnomalyModel(contamination=cfg["contamination"], model_path=cfg["model_path"]).load()
     whitelist = set(cfg.get("whitelist", []) or [])
     dry_run = cfg.get("dry_run", True)
-    already_alerted = set()
+    already_alerted = load_blocked_ips(conn)  # don't re-alert on IPs already blocked from a prior run
+    if already_alerted:
+        print(f"[main] Loaded {len(already_alerted)} previously blocked IP(s) from database")
     tracker = FlowTracker(
         scan_window_seconds=cfg.get("scan_window_seconds", 5),
         flow_timeout_seconds=cfg.get("flow_timeout_seconds", 30),
@@ -105,7 +110,7 @@ def run_detect_mode(cfg):
                     feats["rule_reason"] = rule_reason
                 log_alert(conn, feats, action, score, explanation=top_explanation)
                 already_alerted.add(feats["src_ip"])
-            block_ip(feats["src_ip"], dry_run=dry_run)
+            block_ip(conn, feats["src_ip"], dry_run=dry_run, reason=feats.get("rule_reason", ""))
 
     mode_str = "DRY-RUN (no real blocking)" if dry_run else "LIVE (will modify iptables!)"
     print(f"[main] DETECT mode -- {mode_str}")
