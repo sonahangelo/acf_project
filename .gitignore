@@ -6,3 +6,4 @@ models/*.pkl
 .pytest_cache/
 data/*.db
 data/*.db-*
+detect_output.log
