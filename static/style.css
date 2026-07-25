@@ -205,3 +205,14 @@ tr:last-child td { border-bottom: none; }
   color: var(--danger);
   background: rgba(239, 68, 68, 0.1);
 }
+
+.brand-icon {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
