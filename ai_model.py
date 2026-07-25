@@ -33,7 +33,21 @@ class AnomalyModel:
         import sqlite3
         conn = sqlite3.connect(db_path)
         df = pd.read_sql_query("SELECT * FROM traffic", conn)
+
+        # Exclude traffic timestamps that match confirmed threats, so a
+        # known-bad pattern doesn't get reinforced as "normal" next time
+        # the model is trained on raw traffic.
+        confirmed = pd.read_sql_query(
+            "SELECT timestamp FROM alerts WHERE feedback = 'confirmed_threat'", conn
+        )
         conn.close()
+        if not confirmed.empty:
+            before = len(df)
+            df = df[~df["timestamp"].isin(confirmed["timestamp"])]
+            excluded = before - len(df)
+            if excluded:
+                print(f"[ai_model] Excluded {excluded} row(s) matching confirmed threats from training")
+
         if df.empty:
             raise ValueError(f"No data found in {db_path} -- capture some traffic first.")
 

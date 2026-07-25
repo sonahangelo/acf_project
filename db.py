@@ -56,6 +56,10 @@ def init_db(conn):
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_src_ip ON alerts(src_ip)")
 
+    # Add feedback column if it doesn't exist yet (safe to run repeatedly)
+    existing_cols = [row[1] for row in conn.execute("PRAGMA table_info(alerts)").fetchall()]
+    if "feedback" not in existing_cols:
+        conn.execute("ALTER TABLE alerts ADD COLUMN feedback TEXT")
 
 def insert_row(conn, table, row_dict):
     cols = list(row_dict.keys())

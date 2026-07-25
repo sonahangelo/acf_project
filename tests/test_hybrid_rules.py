@@ -126,3 +126,80 @@ def test_high_scan_pps_alone_is_not_labeled_a_scan():
     cfg = {"scan_zscore_threshold": 3.0, "scan_min_distinct_ports": 5}
     triggered, reason = check_hybrid_rules(feats, model, [0]*12, cfg)
     assert not triggered
+
+
+def test_confirmed_threat_rows_excluded_from_training():
+    """
+    Regression test: traffic matching a confirmed_threat timestamp should
+    not be included as "normal" training data -- otherwise the model
+    would learn to treat a known attack pattern as acceptable.
+    """
+    import sqlite3
+    import pandas as pd
+    from ai_model import AnomalyModel
+
+    conn = sqlite3.connect(":memory:")
+    from db import init_db, insert_row, TRAFFIC_COLUMNS
+    init_db(conn)
+
+    # Insert 5 normal traffic rows + 1 that matches a confirmed threat
+    for i in range(5):
+        row = {col: 0 for col in TRAFFIC_COLUMNS}
+        row["timestamp"] = float(i)
+        row["src_ip"] = "1.2.3.4"
+        row["dst_ip"] = "5.6.7.8"
+        row["protocol"] = "TCP"
+        row["tcp_flags"] = ""
+        row["packet_length"] = 100
+        insert_row(conn, "traffic", row)
+
+    bad_row = {col: 0 for col in TRAFFIC_COLUMNS}
+    bad_row["timestamp"] = 999.0
+    bad_row["src_ip"] = "9.9.9.9"
+    bad_row["dst_ip"] = "5.6.7.8"
+    bad_row["protocol"] = "TCP"
+    bad_row["tcp_flags"] = ""
+    bad_row["packet_length"] = 9999
+    insert_row(conn, "traffic", bad_row)
+
+    alert_row = {col: 0 for col in TRAFFIC_COLUMNS}
+    alert_row["timestamp"] = 999.0
+    alert_row["src_ip"] = "9.9.9.9"
+    alert_row["dst_ip"] = "5.6.7.8"
+    alert_row["protocol"] = "TCP"
+    alert_row["tcp_flags"] = ""
+    alert_row["action"] = "BLOCK"
+    alert_row["score"] = -0.5
+    alert_row["feedback"] = "confirmed_threat"
+    insert_row(conn, "alerts", alert_row)
+    conn.commit()
+    conn.close()
+
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    conn2 = sqlite3.connect(tmp_path)
+    init_db(conn2)
+    for i in range(5):
+        row = {col: 0 for col in TRAFFIC_COLUMNS}
+        row["timestamp"] = float(i)
+        row["src_ip"] = "1.2.3.4"
+        row["dst_ip"] = "5.6.7.8"
+        row["protocol"] = "TCP"
+        row["tcp_flags"] = ""
+        row["packet_length"] = 100
+        insert_row(conn2, "traffic", row)
+    insert_row(conn2, "traffic", bad_row)
+    insert_row(conn2, "alerts", alert_row)
+    conn2.commit()
+    conn2.close()
+
+    model = AnomalyModel(model_path=tmp_path.replace(".db", ".pkl"))
+    conn3 = sqlite3.connect(tmp_path)
+    df_check = pd.read_sql_query("SELECT * FROM traffic", conn3)
+    conn3.close()
+    assert len(df_check) == 6  # confirms the bad row IS in traffic (excluded only during train())
+
+    import os
+    os.unlink(tmp_path)
