@@ -91,3 +91,19 @@ Both services auto-restart on crash (5s delay). Service files are at
 Note: WSL itself must be running for these to be active -- they start
 when WSL starts, not necessarily at Windows boot, unless WSL is
 separately configured to auto-launch.
+
+## ARP spoofing detection
+
+ACF also monitors ARP traffic for IP-to-MAC binding conflicts -- the
+classic signature of ARP spoofing (an attacker impersonating another
+device, often the gateway, for man-in-the-middle interception).
+
+IMPORTANT: this is detection/alerting only, not prevention. ARP spoofing
+is a Layer 2 attack; blocking the offending IP via iptables (Layer 3)
+does not stop it, since the attacker remains on your local network
+segment. Real mitigation requires switch-level protections (Dynamic
+ARP Inspection) or static ARP entries for critical hosts like your
+gateway.
+
+Requires capturing ARP traffic: `bpf_filter` in config.yml must include
+`arp` (default: `"arp or ip"`).

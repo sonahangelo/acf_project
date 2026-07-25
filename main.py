@@ -7,9 +7,11 @@ main.py -- ACF Entry Point (CLI)
 
 import argparse
 
+from scapy.all import ARP
 from capture import start_capture
-from features import extract_features, to_model_vector
+from features import extract_features, to_model_vector, extract_arp_features
 from flow_tracker import FlowTracker
+from arp_monitor import ArpBindingTracker
 from ai_model import AnomalyModel
 from decision import decide
 from firewall import block_ip, load_blocked_ips
@@ -29,6 +31,8 @@ def run_learn_mode(cfg, count):
     )
 
     def handle(pkt):
+        if pkt.haslayer(ARP):
+            return  # learn mode only builds ML training data; ARP handled separately in detect mode
         feats = extract_features(pkt)
         if not feats:
             return
@@ -70,6 +74,16 @@ def check_hybrid_rules(feats, model, vector, cfg):
 
     return False, None
 
+def check_arp_spoof(arp_feats, tracker):
+    """
+    Returns (triggered: bool, reason: str or None).
+    """
+    is_conflict, previous_mac = tracker.check(arp_feats["src_ip"], arp_feats["src_mac"])
+    if is_conflict:
+        reason = (f"arp_spoofing (ip={arp_feats['src_ip']} now claimed by "
+                   f"mac={arp_feats['src_mac']}, previously mac={previous_mac})")
+        return True, reason
+    return False, None
 
 def run_detect_mode(cfg):
     conn = get_connection(cfg["db_path"])
@@ -81,6 +95,7 @@ def run_detect_mode(cfg):
     already_alerted = load_blocked_ips(conn)  # don't re-alert on IPs already blocked from a prior run
     if already_alerted:
         print(f"[main] Loaded {len(already_alerted)} previously blocked IP(s) from database")
+    arp_tracker = ArpBindingTracker()
     tracker = FlowTracker(
         scan_window_seconds=cfg.get("scan_window_seconds", 5),
         flow_timeout_seconds=cfg.get("flow_timeout_seconds", 30),
@@ -90,6 +105,20 @@ def run_detect_mode(cfg):
 
     def handle(pkt):
         try:
+            if pkt.haslayer(ARP):
+                arp_feats = extract_arp_features(pkt)
+                if not arp_feats:
+                    return
+                triggered, reason = check_arp_spoof(arp_feats, arp_tracker)
+                if triggered:
+                    log_traffic(conn, arp_feats)
+                    if arp_feats["src_ip"] not in already_alerted:
+                        arp_feats["rule_reason"] = reason
+                        log_alert(conn, arp_feats, "BLOCK", 0.0, explanation=None)
+                        already_alerted.add(arp_feats["src_ip"])
+                    block_ip(conn, arp_feats["src_ip"], dry_run=dry_run, reason=reason)
+                return
+
             feats = extract_features(pkt)
             if not feats:
                 return

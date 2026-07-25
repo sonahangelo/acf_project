@@ -1,7 +1,7 @@
 # ACF Configuration
 
 interface: ""
-bpf_filter: "ip"
+bpf_filter: "arp or ip"
 flush_every: 20
 contamination: 0.02
 dry_run: true

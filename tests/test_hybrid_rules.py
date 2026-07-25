@@ -203,3 +203,27 @@ def test_confirmed_threat_rows_excluded_from_training():
 
     import os
     os.unlink(tmp_path)
+
+
+def test_check_arp_spoof_detects_mac_change():
+    from main import check_arp_spoof
+    from arp_monitor import ArpBindingTracker
+
+    tracker = ArpBindingTracker()
+    tracker.check("192.168.1.1", "aa:bb:cc:dd:ee:ff")  # establish binding
+
+    arp_feats = {"src_ip": "192.168.1.1", "src_mac": "11:22:33:44:55:66"}
+    triggered, reason = check_arp_spoof(arp_feats, tracker)
+    assert triggered
+    assert "arp_spoofing" in reason
+    assert "192.168.1.1" in reason
+
+
+def test_check_arp_spoof_first_sighting_not_flagged():
+    from main import check_arp_spoof
+    from arp_monitor import ArpBindingTracker
+
+    tracker = ArpBindingTracker()
+    arp_feats = {"src_ip": "192.168.1.1", "src_mac": "aa:bb:cc:dd:ee:ff"}
+    triggered, reason = check_arp_spoof(arp_feats, tracker)
+    assert not triggered

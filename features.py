@@ -6,7 +6,7 @@ features are merged in by main.py via FlowTracker before logging/prediction.
 """
 
 import time
-from scapy.all import IP, TCP, UDP
+from scapy.all import IP, TCP, UDP, ARP
 
 
 def extract_features(pkt):
@@ -57,3 +57,24 @@ MODEL_FEATURE_COLUMNS = [
 
 def to_model_vector(feature_dict):
     return [feature_dict.get(col, 0) or 0 for col in MODEL_FEATURE_COLUMNS]
+def extract_arp_features(pkt):
+    """
+    Extract fields from an ARP packet. Returns None if not ARP.
+    Kept separate from extract_features()/MODEL_FEATURE_COLUMNS since
+    ARP spoofing detection is a rule-based check (IP-to-MAC binding
+    conflicts), not part of the ML anomaly model.
+    """
+    import time
+    if not pkt.haslayer(ARP):
+        return None
+
+    arp = pkt[ARP]
+    return {
+        "timestamp": time.time(),
+        "src_ip": arp.psrc,
+        "dst_ip": arp.pdst,
+        "src_mac": arp.hwsrc,
+        "op": arp.op,  # 1 = request, 2 = reply
+        "packet_length": len(pkt),
+        "protocol": "ARP",
+    }
