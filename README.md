@@ -69,3 +69,25 @@ attempted as an alternative but failed with error 0x8007054f on this setup
 (likely a Hyper-V/VPN/firewall conflict) -- the portproxy approach above
 was used instead and successfully validated real external-device traffic
 reaching ACF's capture pipeline.
+
+## Running as a background service (systemd)
+
+ACF can run continuously via systemd instead of manual terminal sessions:
+
+```bash
+sudo systemctl start acf-detect.service      # detection engine
+sudo systemctl start acf-dashboard.service   # web dashboard
+sudo systemctl enable acf-detect.service     # auto-start on WSL boot
+sudo systemctl enable acf-dashboard.service
+```
+
+Check status: `./acf_service_status.sh`
+View logs: `sudo journalctl -u acf-detect.service -f` (add `-f` to follow live)
+Stop: `sudo systemctl stop acf-detect.service` / `acf-dashboard.service`
+
+Both services auto-restart on crash (5s delay). Service files are at
+`/etc/systemd/system/acf-detect.service` and `acf-dashboard.service`.
+
+Note: WSL itself must be running for these to be active -- they start
+when WSL starts, not necessarily at Windows boot, unless WSL is
+separately configured to auto-launch.
