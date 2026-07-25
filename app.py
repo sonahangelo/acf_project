@@ -22,11 +22,28 @@ from utils import load_config
 app = Flask(__name__)
 cfg = load_config("config.yml")
 
+REASON_CATEGORIES = {
+    "port_scan": "port_scan",
+    "syn_flood": "syn_flood",
+    "repeated_port_probe": "repeated_port_probe",
+    "possible_exfiltration": "exfiltration",
+    "arp_spoofing": "arp_spoofing",
+}
+
 
 def get_db():
     conn = sqlite3.connect(cfg["db_path"])
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def categorize(rule_reason):
+    if not rule_reason:
+        return "ml_anomaly"
+    for prefix, category in REASON_CATEGORIES.items():
+        if rule_reason.startswith(prefix):
+            return category
+    return "ml_anomaly"
 
 
 @app.route("/")
@@ -81,13 +98,52 @@ def api_mark_feedback(alert_id):
 
 @app.route("/api/alerts")
 def api_alerts():
+    search = request.args.get("q", "").strip()
+    reason_filter = request.args.get("reason", "").strip()
+    feedback_filter = request.args.get("feedback", "").strip()
+    limit = min(int(request.args.get("limit", 50)), 200)
+
+    query = ("SELECT id, timestamp, src_ip, dst_ip, action, score, rule_reason, "
+              "top_reasons, feedback FROM alerts WHERE 1=1")
+    params = []
+
+    if search:
+        query += " AND (src_ip LIKE ? OR dst_ip LIKE ? OR rule_reason LIKE ? OR top_reasons LIKE ?)"
+        like = f"%{search}%"
+        params += [like, like, like, like]
+
+    if feedback_filter == "none":
+        query += " AND feedback IS NULL"
+    elif feedback_filter in ("false_positive", "confirmed_threat"):
+        query += " AND feedback = ?"
+        params.append(feedback_filter)
+
+    query += " ORDER BY id DESC LIMIT ?"
+    params.append(limit * 3 if reason_filter else limit)  # overfetch a bit when filtering by category client-unfilterable in SQL cheaply
+
     conn = get_db()
-    rows = conn.execute(
-        "SELECT id, timestamp, src_ip, dst_ip, action, score, rule_reason, "
-        "top_reasons, feedback FROM alerts ORDER BY id DESC LIMIT 50"
-    ).fetchall()
+    rows = [dict(r) for r in conn.execute(query, params).fetchall()]
     conn.close()
-    return jsonify([dict(r) for r in rows])
+
+    if reason_filter:
+        rows = [r for r in rows if categorize(r["rule_reason"]) == reason_filter][:limit]
+
+    return jsonify(rows)
+
+
+@app.route("/api/alert-breakdown")
+def api_alert_breakdown():
+    conn = get_db()
+    rows = conn.execute("SELECT rule_reason FROM alerts").fetchall()
+    conn.close()
+
+    counts = {}
+    for (rule_reason,) in rows:
+        cat = categorize(rule_reason)
+        counts[cat] = counts.get(cat, 0) + 1
+
+    breakdown = [{"category": k, "count": v} for k, v in sorted(counts.items(), key=lambda x: -x[1])]
+    return jsonify(breakdown)
 
 
 @app.route("/api/blocklist")

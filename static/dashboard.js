@@ -1,5 +1,22 @@
 const REFRESH_MS = 4000;
-let trafficHistory = [];
+const CATEGORY_COLORS = {
+  port_scan: "#38bdf8",
+  syn_flood: "#ef4444",
+  repeated_port_probe: "#eab308",
+  exfiltration: "#a855f7",
+  arp_spoofing: "#f97316",
+  ml_anomaly: "#64748b",
+};
+const CATEGORY_LABELS = {
+  port_scan: "Port scan",
+  syn_flood: "SYN flood",
+  repeated_port_probe: "Port probe",
+  exfiltration: "Exfiltration",
+  arp_spoofing: "ARP spoofing",
+  ml_anomaly: "ML anomaly",
+};
+
+let searchDebounceTimer = null;
 
 async function fetchJSON(url) {
   const res = await fetch(url);
@@ -33,6 +50,14 @@ async function refreshSummary() {
   }
 }
 
+function currentFilters() {
+  return {
+    q: document.getElementById("searchInput").value.trim(),
+    reason: document.getElementById("reasonFilter").value,
+    feedback: document.getElementById("feedbackFilter").value,
+  };
+}
+
 async function markFeedback(alertId, label) {
   try {
     const res = await fetch(`/api/alerts/${alertId}/feedback`, {
@@ -52,10 +77,16 @@ async function markFeedback(alertId, label) {
 }
 
 async function refreshAlerts() {
-  const alerts = await fetchJSON("/api/alerts");
+  const f = currentFilters();
+  const params = new URLSearchParams();
+  if (f.q) params.set("q", f.q);
+  if (f.reason) params.set("reason", f.reason);
+  if (f.feedback) params.set("feedback", f.feedback);
+
+  const alerts = await fetchJSON("/api/alerts?" + params.toString());
   const body = document.getElementById("alertsBody");
   if (alerts.length === 0) {
-    body.innerHTML = '<tr><td colspan="7" class="empty">No alerts yet</td></tr>';
+    body.innerHTML = '<tr><td colspan="7" class="empty">No alerts match these filters</td></tr>';
     return;
   }
   body.innerHTML = alerts.map(a => {
@@ -70,7 +101,7 @@ async function refreshAlerts() {
       <td>${formatTime(a.timestamp)}</td>
       <td>${a.src_ip}</td>
       <td>${a.dst_ip}</td>
-      <td class="${scoreClass}">${a.score.toFixed(3)}</td>
+      <td class="${scoreClass}"><span class="score-pill ${scoreClass}">${a.score.toFixed(3)}</span></td>
       <td>${truncate(reason, 60)}</td>
       <td><span class="feedback-tag feedback-${feedback}">${feedback}</span></td>
       <td class="actions-cell">
@@ -78,6 +109,30 @@ async function refreshAlerts() {
         <button class="action-btn action-btn-ct ${ctActive}" onclick="markFeedback(${a.id}, 'confirmed_threat')">Threat</button>
       </td>
     </tr>`;
+  }).join("");
+}
+
+async function refreshBreakdown() {
+  const data = await fetchJSON("/api/alert-breakdown");
+  const container = document.getElementById("breakdownChart");
+
+  if (data.length === 0) {
+    container.innerHTML = '<div class="empty">No alerts yet</div>';
+    return;
+  }
+
+  const max = Math.max(...data.map(d => d.count));
+  container.innerHTML = data.map(d => {
+    const color = CATEGORY_COLORS[d.category] || "#64748b";
+    const label = CATEGORY_LABELS[d.category] || d.category;
+    const pct = (d.count / max) * 100;
+    return `<div class="breakdown-row">
+      <div class="breakdown-label">${label}</div>
+      <div class="breakdown-bar-track">
+        <div class="breakdown-bar-fill" style="width:${pct}%;background:${color};"></div>
+      </div>
+      <div class="breakdown-count">${d.count}</div>
+    </div>`;
   }).join("");
 }
 
@@ -145,11 +200,18 @@ async function refreshTimeline() {
 
 async function refreshAll() {
   try {
-    await Promise.all([refreshSummary(), refreshAlerts(), refreshBlocklist(), refreshTimeline()]);
+    await Promise.all([refreshSummary(), refreshAlerts(), refreshBreakdown(), refreshBlocklist(), refreshTimeline()]);
   } catch (e) {
     console.error("Refresh failed:", e);
   }
 }
+
+document.getElementById("searchInput").addEventListener("input", () => {
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(refreshAlerts, 300);
+});
+document.getElementById("reasonFilter").addEventListener("change", refreshAlerts);
+document.getElementById("feedbackFilter").addEventListener("change", refreshAlerts);
 
 refreshAll();
 setInterval(refreshAll, REFRESH_MS);
