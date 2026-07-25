@@ -107,3 +107,22 @@ gateway.
 
 Requires capturing ARP traffic: `bpf_filter` in config.yml must include
 `arp` (default: `"arp or ip"`).
+
+## DNS tunneling detection
+
+Watches DNS queries for the classic tunneling signature: encoding data
+into many unique, random-looking subdomains under one base domain
+(e.g. `a8f3k2x9.tunnel.evil.com`, `b91d7xq2.tunnel.evil.com`, ...).
+
+Two independent signals, either one triggers an alert:
+  1. Many distinct subdomains under one base domain from one source,
+     queried quickly (default: 15+ within 10 seconds)
+  2. A single high-entropy, long subdomain label (default: 20+ chars,
+     entropy >= 3.5 bits/char) -- looks like base32/64-encoded data
+
+Tunable via dns_window_seconds, dns_min_distinct_subdomains,
+dns_entropy_threshold, dns_min_label_length in config.yml.
+
+Validated live: crafted 20 DNS queries with random subdomains under a
+fake base domain, correctly triggered exactly at the configured
+threshold (15th distinct subdomain).

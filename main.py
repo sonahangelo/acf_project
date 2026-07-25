@@ -9,7 +9,8 @@ import argparse
 
 from scapy.all import ARP
 from capture import start_capture
-from features import extract_features, to_model_vector, extract_arp_features
+from features import extract_features, to_model_vector, extract_arp_features, extract_dns_features
+from dns_monitor import DnsTunnelTracker, shannon_entropy
 from flow_tracker import FlowTracker
 from arp_monitor import ArpBindingTracker
 from ai_model import AnomalyModel
@@ -85,6 +86,32 @@ def check_arp_spoof(arp_feats, tracker):
         return True, reason
     return False, None
 
+def check_dns_tunnel(pkt, tracker, cfg):
+    """
+    Returns (triggered: bool, reason: str or None).
+    """
+    dns_feats = extract_dns_features(pkt)
+    if not dns_feats:
+        return False, None
+
+    distinct_subdomains = tracker.record(
+        dns_feats["src_ip"], dns_feats["base_domain"],
+        dns_feats["leftmost_label"], dns_feats["timestamp"],
+    )
+
+    min_distinct = cfg.get("dns_min_distinct_subdomains", 15)
+    if distinct_subdomains >= min_distinct:
+        return True, (f"dns_tunneling (many_subdomains: {distinct_subdomains} distinct "
+                       f"labels under {dns_feats['base_domain']} from {dns_feats['src_ip']})")
+
+    entropy = shannon_entropy(dns_feats["leftmost_label"])
+    min_length = cfg.get("dns_min_label_length", 20)
+    entropy_threshold = cfg.get("dns_entropy_threshold", 3.5)
+    if len(dns_feats["leftmost_label"]) >= min_length and entropy >= entropy_threshold:
+        return True, (f"dns_tunneling (high_entropy_label: '{dns_feats['leftmost_label'][:30]}...' "
+                       f"entropy={entropy:.2f} under {dns_feats['base_domain']})")
+
+    return False, None
 def run_detect_mode(cfg):
     conn = get_connection(cfg["db_path"])
     init_db(conn)
@@ -96,6 +123,7 @@ def run_detect_mode(cfg):
     if already_alerted:
         print(f"[main] Loaded {len(already_alerted)} previously blocked IP(s) from database")
     arp_tracker = ArpBindingTracker()
+    dns_tracker = DnsTunnelTracker(window_seconds=cfg.get("dns_window_seconds", 10))
     tracker = FlowTracker(
         scan_window_seconds=cfg.get("scan_window_seconds", 5),
         flow_timeout_seconds=cfg.get("flow_timeout_seconds", 30),
@@ -130,6 +158,12 @@ def run_detect_mode(cfg):
             label, score = model.predict(vector)
 
             rule_triggered, rule_reason = check_hybrid_rules(feats, model, vector, cfg)
+
+            dns_triggered, dns_reason = check_dns_tunnel(pkt, dns_tracker, cfg)
+            if dns_triggered:
+                rule_triggered = True
+                rule_reason = dns_reason if not rule_reason else f"{rule_reason}; {dns_reason}"
+
             effective_label = -1 if rule_triggered else label
 
             flow_count_for_decision = None if rule_triggered else feats.get("flow_packet_count")

@@ -227,3 +227,70 @@ def test_check_arp_spoof_first_sighting_not_flagged():
     arp_feats = {"src_ip": "192.168.1.1", "src_mac": "aa:bb:cc:dd:ee:ff"}
     triggered, reason = check_arp_spoof(arp_feats, tracker)
     assert not triggered
+
+
+def test_check_dns_tunnel_flags_many_distinct_subdomains():
+    from main import check_dns_tunnel
+    from dns_monitor import DnsTunnelTracker
+    from scapy.all import IP, UDP, DNS, DNSQR
+
+    tracker = DnsTunnelTracker(window_seconds=10)
+    cfg = {"dns_min_distinct_subdomains": 3, "dns_entropy_threshold": 99, "dns_min_label_length": 99}
+
+    def make_query(label):
+        return (IP(src="1.2.3.4", dst="8.8.8.8") / UDP(sport=5000, dport=53) /
+                DNS(qr=0, qd=DNSQR(qname=f"{label}.evil.com")))
+
+    check_dns_tunnel(make_query("aaa"), tracker, cfg)
+    check_dns_tunnel(make_query("bbb"), tracker, cfg)
+    triggered, reason = check_dns_tunnel(make_query("ccc"), tracker, cfg)
+
+    assert triggered
+    assert "dns_tunneling" in reason
+    assert "many_subdomains" in reason
+
+
+def test_check_dns_tunnel_flags_high_entropy_label():
+    from main import check_dns_tunnel
+    from dns_monitor import DnsTunnelTracker
+    from scapy.all import IP, UDP, DNS, DNSQR
+
+    tracker = DnsTunnelTracker(window_seconds=10)
+    cfg = {"dns_min_distinct_subdomains": 999, "dns_entropy_threshold": 3.0, "dns_min_label_length": 10}
+
+    pkt = (IP(src="1.2.3.4", dst="8.8.8.8") / UDP(sport=5000, dport=53) /
+           DNS(qr=0, qd=DNSQR(qname="a8f3k2x9q7z1m4n6p5.evil.com")))
+
+    triggered, reason = check_dns_tunnel(pkt, tracker, cfg)
+    assert triggered
+    assert "high_entropy_label" in reason
+
+
+def test_check_dns_tunnel_ignores_normal_query():
+    from main import check_dns_tunnel
+    from dns_monitor import DnsTunnelTracker
+    from scapy.all import IP, UDP, DNS, DNSQR
+
+    tracker = DnsTunnelTracker(window_seconds=10)
+    cfg = {"dns_min_distinct_subdomains": 15, "dns_entropy_threshold": 3.5, "dns_min_label_length": 20}
+
+    pkt = (IP(src="1.2.3.4", dst="8.8.8.8") / UDP(sport=5000, dport=53) /
+           DNS(qr=0, qd=DNSQR(qname="www.google.com")))
+
+    triggered, reason = check_dns_tunnel(pkt, tracker, cfg)
+    assert not triggered
+
+
+def test_check_dns_tunnel_ignores_dns_responses():
+    from main import check_dns_tunnel
+    from dns_monitor import DnsTunnelTracker
+    from scapy.all import IP, UDP, DNS, DNSQR
+
+    tracker = DnsTunnelTracker(window_seconds=10)
+    cfg = {"dns_min_distinct_subdomains": 1, "dns_entropy_threshold": 0.1, "dns_min_label_length": 1}
+
+    pkt = (IP(src="1.2.3.4", dst="8.8.8.8") / UDP(sport=53, dport=5000) /
+           DNS(qr=1, qd=DNSQR(qname="a8f3k2x9.evil.com")))  # qr=1 -> response, should be ignored
+
+    triggered, reason = check_dns_tunnel(pkt, tracker, cfg)
+    assert not triggered

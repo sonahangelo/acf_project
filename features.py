@@ -6,7 +6,7 @@ features are merged in by main.py via FlowTracker before logging/prediction.
 """
 
 import time
-from scapy.all import IP, TCP, UDP, ARP
+from scapy.all import IP, TCP, UDP, ARP, DNS, DNSQR
 
 
 def extract_features(pkt):
@@ -77,4 +77,39 @@ def extract_arp_features(pkt):
         "op": arp.op,  # 1 = request, 2 = reply
         "packet_length": len(pkt),
         "protocol": "ARP",
+    }
+def extract_dns_features(pkt):
+    """
+    Extract fields from a DNS query packet. Returns None if not a DNS
+    query (only queries carry the encoded subdomain data in tunneling;
+    responses are handled separately if ever needed).
+    """
+    import time
+    if not (pkt.haslayer(DNS) and pkt.haslayer(DNSQR)):
+        return None
+    if pkt[DNS].qr != 0:  # 0 = query, 1 = response -- only care about queries
+        return None
+    if not pkt.haslayer(IP):
+        return None
+
+    try:
+        qname = pkt[DNSQR].qname.decode(errors="ignore").rstrip(".")
+    except Exception:
+        return None
+
+    if not qname:
+        return None
+
+    labels = qname.split(".")
+    base_domain = ".".join(labels[-2:]) if len(labels) >= 2 else qname
+    leftmost_label = labels[0] if labels else ""
+
+    return {
+        "timestamp": time.time(),
+        "src_ip": pkt[IP].src,
+        "qname": qname,
+        "base_domain": base_domain,
+        "leftmost_label": leftmost_label,
+        "qtype": pkt[DNSQR].qtype,
+        "packet_length": len(pkt),
     }
