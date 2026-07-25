@@ -23,6 +23,8 @@ PC) rather than only WSL-internal traffic:
 
 1. Find your Windows host's LAN IP: `ipconfig` (PowerShell) -> IPv4 Address
 2. Forward the dashboard port through Windows to WSL (elevated PowerShell):
+   netsh interface portproxy add v4tov4 listenport=5050 listenaddress=0.0.0.0 connectport=5050 connectaddress=<current-wsl-ip>
+   New-NetFirewallRule -DisplayName "ACF Dashboard" -Direction Inbound -LocalPort 5050 -Protocol TCP -Action Allow
 3. Bind Flask to `0.0.0.0` (already the default in app.py)
 4. Run `main.py --mode detect` alongside `app.py` to capture the traffic
 5. Access from another device at `http://<windows-lan-ip>:5050`
