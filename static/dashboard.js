@@ -33,17 +33,39 @@ async function refreshSummary() {
   }
 }
 
+async function markFeedback(alertId, label) {
+  try {
+    const res = await fetch(`/api/alerts/${alertId}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      alert(`Failed to mark feedback: ${err.error || res.statusText}`);
+      return;
+    }
+    await refreshAlerts();
+  } catch (e) {
+    console.error("markFeedback failed:", e);
+  }
+}
+
 async function refreshAlerts() {
   const alerts = await fetchJSON("/api/alerts");
   const body = document.getElementById("alertsBody");
   if (alerts.length === 0) {
-    body.innerHTML = '<tr><td colspan="6" class="empty">No alerts yet</td></tr>';
+    body.innerHTML = '<tr><td colspan="7" class="empty">No alerts yet</td></tr>';
     return;
   }
   body.innerHTML = alerts.map(a => {
     const scoreClass = a.score < 0 ? "score-neg" : "score-pos";
     const reason = a.rule_reason || a.top_reasons || "";
     const feedback = a.feedback || "none";
+
+    const fpActive = a.feedback === "false_positive" ? "action-btn-active" : "";
+    const ctActive = a.feedback === "confirmed_threat" ? "action-btn-active" : "";
+
     return `<tr>
       <td>${formatTime(a.timestamp)}</td>
       <td>${a.src_ip}</td>
@@ -51,6 +73,10 @@ async function refreshAlerts() {
       <td class="${scoreClass}">${a.score.toFixed(3)}</td>
       <td>${truncate(reason, 60)}</td>
       <td><span class="feedback-tag feedback-${feedback}">${feedback}</span></td>
+      <td class="actions-cell">
+        <button class="action-btn action-btn-fp ${fpActive}" onclick="markFeedback(${a.id}, 'false_positive')">FP</button>
+        <button class="action-btn action-btn-ct ${ctActive}" onclick="markFeedback(${a.id}, 'confirmed_threat')">Threat</button>
+      </td>
     </tr>`;
   }).join("");
 }

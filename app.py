@@ -1,9 +1,11 @@
 """
-app.py -- ACF Dashboard (read-only web UI)
+app.py -- ACF Dashboard (web UI)
 
-A local Flask app that serves a live-updating dashboard over ACF's SQLite
-database. Read-only: never modifies traffic/alerts/blocked_ips. Blocklist
-management still goes through blocklist.py; this is for visibility only.
+A local Flask app serving a live-updating dashboard over ACF's SQLite
+database. Mostly read-only, with one write path: marking alert feedback
+(false_positive / confirmed_threat), which feeds back into training via
+ai_model.py's exclusion logic. Blocklist management (unblocking, etc.)
+still goes through blocklist.py -- not exposed here.
 
 Usage:
   python app.py
@@ -13,7 +15,7 @@ Usage:
 import sqlite3
 import time
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 
 from utils import load_config
 
@@ -54,6 +56,27 @@ def api_summary():
         "dry_run": cfg.get("dry_run", True),
         "server_time": time.time(),
     })
+
+
+@app.route("/api/alerts/<int:alert_id>/feedback", methods=["POST"])
+def api_mark_feedback(alert_id):
+    data = request.get_json(silent=True) or {}
+    label = data.get("label")
+
+    if label not in ("false_positive", "confirmed_threat", None):
+        return jsonify({"error": "label must be 'false_positive', 'confirmed_threat', or null to clear"}), 400
+
+    conn = get_db()
+    exists = conn.execute("SELECT id FROM alerts WHERE id = ?", (alert_id,)).fetchone()
+    if not exists:
+        conn.close()
+        return jsonify({"error": f"no alert with id {alert_id}"}), 404
+
+    conn.execute("UPDATE alerts SET feedback = ? WHERE id = ?", (label, alert_id))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"id": alert_id, "feedback": label})
 
 
 @app.route("/api/alerts")

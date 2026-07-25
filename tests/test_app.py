@@ -56,3 +56,29 @@ def test_traffic_timeline_endpoint_returns_list(client):
     response = client.get("/api/traffic-timeline")
     assert response.status_code == 200
     assert isinstance(response.get_json(), list)
+
+
+def test_mark_feedback_endpoint_sets_label(client):
+    conn = None
+    import app as app_module
+    import sqlite3
+    conn = sqlite3.connect(app_module.cfg["db_path"])
+    conn.execute("INSERT INTO alerts (src_ip, dst_ip, action, score) VALUES (?, ?, ?, ?)",
+                 ("9.9.9.9", "1.1.1.1", "BLOCK", -0.1))
+    conn.commit()
+    alert_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.close()
+
+    response = client.post(f"/api/alerts/{alert_id}/feedback", json={"label": "false_positive"})
+    assert response.status_code == 200
+    assert response.get_json()["feedback"] == "false_positive"
+
+
+def test_mark_feedback_rejects_invalid_label(client):
+    response = client.post("/api/alerts/1/feedback", json={"label": "not_a_real_label"})
+    assert response.status_code == 400
+
+
+def test_mark_feedback_on_nonexistent_alert_returns_404(client):
+    response = client.post("/api/alerts/9999/feedback", json={"label": "false_positive"})
+    assert response.status_code == 404
