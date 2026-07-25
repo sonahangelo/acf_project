@@ -7,3 +7,4 @@ models/*.pkl
 data/*.db
 data/*.db-*
 detect_output.log
+acf-env/bin/python3-acf

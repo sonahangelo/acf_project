@@ -1,12 +1,43 @@
-
 ## Setup: avoiding sudo for capture
 
-Packet capture requires raw socket access. Instead of running everything
-under `sudo`, grant the capability directly to the system Python binary:
+Packet capture requires raw socket access. Rather than granting this to the
+system-wide Python interpreter (which would let *any* script use raw
+sockets), we use a dedicated copy of Python just for ACF:
 
 ```bash
-sudo setcap cap_net_raw,cap_net_admin=eip $(readlink -f $(which python3))
+cp /usr/bin/python3.11 acf-env/bin/python3-acf
+sudo setcap cap_net_raw,cap_net_admin=eip acf-env/bin/python3-acf
 ```
+
+Then run ACF commands with `acf-env/bin/python3-acf` instead of `python3`
+for capture/learn/detect modes:
+
+```bash
+acf-env/bin/python3-acf main.py --mode learn --count 5000
+acf-env/bin/python3-acf main.py --mode detect
+```
+
+Other commands (training, status, blocklist, feedback, dashboard) don't
+need raw socket access and can keep using the regular `python3`.
+
+Note: `python3-acf` is a real copy, not a symlink, and won't survive a venv
+recreation -- redo the `cp` + `setcap` steps if you rebuild the venv.
+
+Save, exit.
+
+**Step 2 — Add `python3-acf` to `.gitignore`** (it's a binary copy, shouldn't be committed):
+```bash
+echo "acf-env/bin/python3-acf" >> .gitignore
+```
+
+**Step 3 — Commit:**
+```bash
+git add .
+git commit -m "Narrow setcap grant: use a dedicated python3-acf binary instead of the system-wide interpreter, confining raw-socket capability to just ACF"
+```
+
+Paste the confirmation — that closes out #4 and completes everything from your original list.
+
 
 Note: this must be re-applied if the Python venv or system Python version
 changes (e.g. after `apt upgrade` or recreating the venv), since capabilities
