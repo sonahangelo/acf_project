@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ACF — Adaptive Cognitive Firewall</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">ACF</span>
+      <span class="brand-sub">Adaptive Cognitive Firewall</span>
+    </div>
+    <div class="mode-indicator" id="modeIndicator">—</div>
+  </header>
+
+  <main class="grid">
+    <section class="stat-row">
+      <div class="stat-card">
+        <div class="stat-label">Traffic Logged</div>
+        <div class="stat-value" id="statTraffic">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Alerts Fired</div>
+        <div class="stat-value" id="statAlerts">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Alert Rate</div>
+        <div class="stat-value" id="statRate">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Blocked IPs</div>
+        <div class="stat-value" id="statBlocked">—</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Traffic — last 30 min</h2>
+      </div>
+      <canvas id="sparkline" height="70"></canvas>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Recent Alerts</h2>
+      </div>
+      <div class="table-wrap">
+        <table id="alertsTable">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Source</th>
+              <th>Destination</th>
+              <th>Score</th>
+              <th>Reason</th>
+              <th>Feedback</th>
+            </tr>
+          </thead>
+          <tbody id="alertsBody">
+            <tr><td colspan="6" class="empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Currently Blocked</h2>
+      </div>
+      <div class="table-wrap">
+        <table id="blocklistTable">
+          <thead>
+            <tr>
+              <th>IP</th>
+              <th>Blocked At</th>
+              <th>Mode</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody id="blocklistBody">
+            <tr><td colspan="4" class="empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/dashboard.js"></script>
+</body>
+</html>
