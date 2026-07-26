@@ -18,7 +18,10 @@
       <span class="brand-mark">ACF</span>
       <span class="brand-sub">Adaptive Cognitive Firewall</span>
     </div>
-    <div class="mode-indicator" id="modeIndicator">—</div>
+    <div class="topbar-right">
+      <div class="health-dot" id="healthDot" title="Detection service status"></div>
+      <div class="mode-indicator" id="modeIndicator">—</div>
+    </div>
   </header>
 
   <main class="grid">
@@ -38,6 +41,15 @@
       <div class="stat-card">
         <div class="stat-label">Blocked IPs</div>
         <div class="stat-value" id="statBlocked">—</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>System Health</h2>
+      </div>
+      <div class="health-grid" id="healthGrid">
+        <div class="empty">Loading…</div>
       </div>
     </section>
 
@@ -71,6 +83,10 @@
             <option value="repeated_port_probe">Port probe</option>
             <option value="exfiltration">Exfiltration</option>
             <option value="arp_spoofing">ARP spoofing</option>
+            <option value="dns_tunneling">DNS tunneling</option>
+            <option value="stealth_scan">Stealth scan</option>
+            <option value="icmp_flood">ICMP flood</option>
+            <option value="brute_force">Brute force</option>
             <option value="ml_anomaly">ML anomaly</option>
           </select>
           <select id="feedbackFilter" class="filter-select">
@@ -79,6 +95,7 @@
             <option value="false_positive">False positive</option>
             <option value="confirmed_threat">Confirmed threat</option>
           </select>
+          <button id="exportBtn" class="filter-btn">Export CSV</button>
         </div>
       </div>
       <div class="table-wrap">
@@ -113,15 +130,18 @@
               <th>Blocked At</th>
               <th>Mode</th>
               <th>Reason</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody id="blocklistBody">
-            <tr><td colspan="4" class="empty">Loading…</td></tr>
+            <tr><td colspan="5" class="empty">Loading…</td></tr>
           </tbody>
         </table>
       </div>
     </section>
   </main>
+
+  <div id="toastContainer" class="toast-container"></div>
 
   <script src="/static/dashboard.js"></script>
 </body>

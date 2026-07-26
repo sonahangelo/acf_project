@@ -340,3 +340,97 @@ tr:last-child td { border-bottom: none; }
   th, td { padding: 8px 12px; }
   .breakdown-row { grid-template-columns: 80px 1fr 28px; }
 }
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.health-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.health-dot.health-ok { background: var(--safe); box-shadow: 0 0 6px var(--safe); }
+.health-dot.health-bad { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
+
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+  padding: 18px 20px 20px;
+}
+
+.health-item-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.health-item-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.health-good { color: var(--safe); }
+.health-warn { color: var(--warn); }
+
+.filter-btn {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 7px 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.filter-btn:hover {
+  border-color: var(--info);
+  color: var(--info);
+}
+
+.action-btn-unblock {
+  border-color: var(--border);
+}
+.action-btn-unblock:hover {
+  border-color: var(--safe);
+  color: var(--safe);
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 100;
+}
+
+.toast {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--text);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.toast-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.toast-success { border-color: var(--safe); }
+.toast-error { border-color: var(--danger); }
