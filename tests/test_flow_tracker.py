@@ -109,3 +109,24 @@ def test_port_repeat_is_specific_to_one_endpoint():
     b["tcp_flags"] = "S"
     result = tracker.update(b)
     assert result["port_repeat_count"] == 1  # separate counter per (src,dst,port)
+
+
+def test_icmp_flood_counted_correctly():
+    tracker = FlowTracker(icmp_window_seconds=5)
+    for i in range(5):
+        feats = _pkt(ts=1000.0 + i * 0.1, protocol="ICMP", dst_port=None)
+        result = tracker.update(feats)
+    assert result["icmp_count"] == 5
+
+
+def test_non_icmp_traffic_has_zero_icmp_count():
+    tracker = FlowTracker(icmp_window_seconds=5)
+    result = tracker.update(_pkt(ts=1000.0, protocol="TCP"))
+    assert result["icmp_count"] == 0
+
+
+def test_icmp_count_respects_window():
+    tracker = FlowTracker(icmp_window_seconds=5)
+    tracker.update(_pkt(ts=1000.0, protocol="ICMP", dst_port=None))
+    result = tracker.update(_pkt(ts=1010.0, protocol="ICMP", dst_port=None))  # 10s later, window is 5s
+    assert result["icmp_count"] == 1

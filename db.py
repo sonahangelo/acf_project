@@ -11,7 +11,7 @@ TRAFFIC_COLUMNS = [
     "timestamp", "src_ip", "dst_ip", "src_port", "dst_port", "protocol",
     "packet_length", "tcp_flags",
     "flow_duration", "flow_packet_count", "flow_byte_count", "flow_pps", "flow_bps",
-    "scan_distinct_ports", "scan_pps", "syn_count", "port_repeat_count",
+    "scan_distinct_ports", "scan_pps", "syn_count", "port_repeat_count", "icmp_count",
 ]
 
 ALERT_EXTRA_COLUMNS = ["action", "score", "top_reasons", "rule_reason"]

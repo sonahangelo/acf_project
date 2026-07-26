@@ -359,3 +359,22 @@ def test_udp_traffic_not_affected_by_stealth_scan_check():
            "scan_zscore_threshold": 3.0, "scan_min_distinct_ports": 5}
     triggered, reason = check_hybrid_rules(feats, model, [0]*12, cfg)
     assert not triggered
+
+
+def test_icmp_flood_rule_triggers_above_threshold():
+    model = _fake_model_explain({})
+    feats = {"protocol": "UDP", "syn_count": 0, "port_repeat_count": 0, "flow_byte_count": 0,
+              "flow_duration": 0, "icmp_count": 60}
+    cfg = {"icmp_flood_threshold": 50}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*13, cfg)
+    assert triggered
+    assert "icmp_flood" in reason
+
+
+def test_icmp_count_below_threshold_does_not_trigger():
+    model = _fake_model_explain({})
+    feats = {"protocol": "UDP", "syn_count": 0, "port_repeat_count": 0, "flow_byte_count": 0,
+              "flow_duration": 0, "icmp_count": 10}
+    cfg = {"icmp_flood_threshold": 50}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*13, cfg)
+    assert not triggered

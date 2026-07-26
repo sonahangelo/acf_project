@@ -29,6 +29,7 @@ def run_learn_mode(cfg, count):
         flow_timeout_seconds=cfg.get("flow_timeout_seconds", 30),
         syn_window_seconds=cfg.get("syn_window_seconds", 5),
         port_repeat_window_seconds=cfg.get("port_repeat_window_seconds", 10),
+        icmp_window_seconds=cfg.get("icmp_window_seconds", 5),
     )
 
     def handle(pkt):
@@ -76,9 +77,15 @@ def check_hybrid_rules(feats, model, vector, cfg):
     if feats.get("syn_count", 0) >= syn_threshold:
         return True, f"syn_flood (syn_count={feats.get('syn_count')} in {cfg.get('syn_window_seconds', 5)}s)"
 
+    # Repeated probing of one specific port.
     port_repeat_threshold = cfg.get("port_repeat_threshold", 8)
     if feats.get("port_repeat_count", 0) >= port_repeat_threshold:
         return True, f"repeated_port_probe (attempts={feats.get('port_repeat_count')} to dst_port={feats.get('dst_port')})"
+
+# ICMP flood (ping flood).
+    icmp_threshold = cfg.get("icmp_flood_threshold", 50)
+    if feats.get("icmp_count", 0) >= icmp_threshold:
+        return True, f"icmp_flood (icmp_count={feats.get('icmp_count')} in {cfg.get('icmp_window_seconds', 5)}s)"
 
     exfil_bytes = cfg.get("exfil_bytes_threshold", 5_000_000)
     exfil_duration = cfg.get("exfil_min_duration_seconds", 5)

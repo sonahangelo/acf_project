@@ -6,7 +6,7 @@ features are merged in by main.py via FlowTracker before logging/prediction.
 """
 
 import time
-from scapy.all import IP, TCP, UDP, ARP, DNS, DNSQR
+from scapy.all import IP, TCP, UDP, ARP, DNS, DNSQR, ICMP
 
 
 def extract_features(pkt):
@@ -27,6 +27,8 @@ def extract_features(pkt):
         protocol = "UDP"
         src_port = pkt[UDP].sport
         dst_port = pkt[UDP].dport
+    elif pkt.haslayer(ICMP):
+        protocol = "ICMP"
 
     return {
         "timestamp": time.time(),
@@ -52,6 +54,9 @@ MODEL_FEATURE_COLUMNS = [
     "flow_bps",
     "scan_distinct_ports",
     "scan_pps",
+    "syn_count",
+    "port_repeat_count",
+    "icmp_count",
 ]
 
 

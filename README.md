@@ -145,3 +145,21 @@ module like ARP/DNS required.
 Validated live with real nmap -sN/-sF/-sX scans against a non-whitelisted
 loopback address; confirmed via captured traffic (correct flag values:
 '', 'F', 'FPU') and a logged alert with the correct reason.
+
+## ICMP flood (ping flood) detection
+
+Tracks ICMP echo request rate per source IP (default: 50+ within 5
+seconds triggers an alert), reusing the same sliding-window technique
+as SYN flood tracking.
+
+HONEST NOTE on live validation: when tested (60 crafted ICMP packets to
+a non-whitelisted target), the alert fired correctly but was actually
+caught by the base ML anomaly model, not the icmp_flood rule specifically
+-- because training data typically contains near-zero ICMP traffic, so
+even a single ICMP packet already looks statistically anomalous to the
+model, well before the rule's volume threshold is reached. The rule
+itself is confirmed correct via unit tests (isolated, deterministic),
+and serves as a backstop: if training data later includes some normal
+ICMP traffic (e.g. you ping things occasionally), the ML model's
+sensitivity would normalize and the rule-based threshold becomes the
+primary defense against a real flood.

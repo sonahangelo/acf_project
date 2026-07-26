@@ -25,16 +25,19 @@ from collections import defaultdict, deque
 
 class FlowTracker:
     def __init__(self, scan_window_seconds=5, flow_timeout_seconds=30,
-                 syn_window_seconds=5, port_repeat_window_seconds=10):
+                 syn_window_seconds=5, port_repeat_window_seconds=10,
+                 icmp_window_seconds=5):
         self.scan_window_seconds = scan_window_seconds
         self.flow_timeout_seconds = flow_timeout_seconds
         self.syn_window_seconds = syn_window_seconds
         self.port_repeat_window_seconds = port_repeat_window_seconds
+        self.icmp_window_seconds = icmp_window_seconds
 
         self._flows = {}  # 5-tuple -> {start, last, packet_count, byte_count}
         self._scan_history = defaultdict(deque)          # src_ip -> deque of (ts, dst_port)
         self._syn_history = defaultdict(deque)            # src_ip -> deque of ts
         self._port_attempt_history = defaultdict(deque)   # (src_ip,dst_ip,dst_port) -> deque of ts
+        self._icmp_history = defaultdict(deque)            # src_ip -> deque of ts
 
     def _flow_key(self, feats):
         return (feats["src_ip"], feats.get("src_port"), feats["dst_ip"],
@@ -107,6 +110,16 @@ class FlowTracker:
 
         self._expire_flows(ts)
 
+        # --- per-source-IP ICMP tracking (ping flood detection) ---
+        icmp_count = 0
+        if feats.get("protocol") == "ICMP":
+            icmp_hist = self._icmp_history[src_ip]
+            icmp_hist.append(ts)
+            icmp_cutoff = ts - self.icmp_window_seconds
+            while icmp_hist and icmp_hist[0] < icmp_cutoff:
+                icmp_hist.popleft()
+            icmp_count = len(icmp_hist)
+
         return {
             "flow_duration": round(duration, 3),
             "flow_packet_count": flow["packet_count"],
@@ -117,6 +130,7 @@ class FlowTracker:
             "scan_pps": round(scan_pps, 2),
             "syn_count": syn_count,
             "port_repeat_count": port_repeat_count,
+            "icmp_count": icmp_count,
         }
 
     def _expire_flows(self, now):
