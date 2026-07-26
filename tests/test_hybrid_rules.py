@@ -426,3 +426,49 @@ def test_brute_force_takes_priority_over_generic_port_probe():
     assert triggered
     assert "brute_force" in reason
     assert "repeated_port_probe" not in reason
+
+
+def test_syn_fin_combination_detected():
+    model = _fake_model_explain({})
+    feats = {"protocol": "TCP", "tcp_flags": "SF", "syn_count": 0, "port_repeat_count": 0,
+              "flow_byte_count": 0, "flow_duration": 0}
+    cfg = {}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*13, cfg)
+    assert triggered
+    assert "invalid_flags" in reason
+    assert "SYN+FIN" in reason
+
+
+def test_syn_rst_combination_detected():
+    model = _fake_model_explain({})
+    feats = {"protocol": "TCP", "tcp_flags": "SR", "syn_count": 0, "port_repeat_count": 0,
+              "flow_byte_count": 0, "flow_duration": 0}
+    cfg = {}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*13, cfg)
+    assert triggered
+    assert "invalid_flags" in reason
+    assert "SYN+RST" in reason
+
+
+def test_normal_syn_alone_not_flagged_as_invalid():
+    model = _fake_model_explain({"scan_distinct_ports": 0.1, "scan_pps": -0.5})
+    feats = {"protocol": "TCP", "tcp_flags": "S", "dst_port": 80, "port_repeat_count": 1,
+              "syn_count": 1, "flow_byte_count": 100, "flow_duration": 1,
+              "scan_pps": 5, "scan_distinct_ports": 1}
+    cfg = {"syn_flood_threshold": 20, "port_repeat_threshold": 8,
+           "exfil_bytes_threshold": 5_000_000, "exfil_min_duration_seconds": 5,
+           "scan_zscore_threshold": 3.0, "scan_min_distinct_ports": 5,
+           "brute_force_ports": [], "brute_force_threshold": 5}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*13, cfg)
+    assert not triggered
+
+
+def test_syn_fin_ack_still_flagged_even_with_other_flags():
+    # SYN+FIN is invalid regardless of what else is set alongside it
+    model = _fake_model_explain({})
+    feats = {"protocol": "TCP", "tcp_flags": "SFA", "syn_count": 0, "port_repeat_count": 0,
+              "flow_byte_count": 0, "flow_duration": 0}
+    cfg = {}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*13, cfg)
+    assert triggered
+    assert "invalid_flags" in reason

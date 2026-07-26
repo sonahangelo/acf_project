@@ -182,3 +182,22 @@ in config.yml.
 Validated live: simulated SSH brute-force with hping3 (10 rapid SYN
 packets to port 22), correctly triggered exactly at the configured
 threshold (5th attempt) with the specific port identified in the alert.
+
+## Invalid TCP flag combinations
+
+Detects logically contradictory TCP flag combinations that never occur
+in real network stacks -- only from packet-crafting tools used for
+firewall/IDS evasion or OS fingerprinting:
+
+  - SYN+FIN: a packet claiming to simultaneously open and close a connection
+  - SYN+RST: a packet claiming to simultaneously open and abort a connection
+
+Checked alongside the existing NULL/FIN/XMAS stealth scan detection in
+check_hybrid_rules() -- same stateless, immediate-check pattern.
+
+Validated live: crafted SYN+FIN packet via Scapy against a non-whitelisted
+loopback target, correctly triggered with the specific reason identified.
+SYN+RST uses identical logic (confirmed via unit tests); live confirmation
+was complicated by the blocklist dedup correctly suppressing a repeat
+alert for the same already-blocked test source IP within the same
+process lifetime -- a known, correct behavior, not a detection gap.

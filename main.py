@@ -62,6 +62,15 @@ def check_hybrid_rules(feats, model, vector, cfg):
         if {"F", "P", "U"} <= flag_set:
             return True, "stealth_scan (XMAS scan: FIN+PSH+URG flags set)"
 
+        # Invalid/contradictory flag combinations -- a packet can't
+        # logically be opening (SYN) and closing (FIN/RST) a connection
+        # at the same time. Only crafted packets do this, typically for
+        # firewall/IDS evasion or OS fingerprinting tools.
+        if {"S", "F"} <= flag_set:
+            return True, "invalid_flags (SYN+FIN set together: contradictory, crafted packet)"
+        if {"S", "R"} <= flag_set:
+            return True, "invalid_flags (SYN+RST set together: contradictory, crafted packet)"
+
     explanation = model.explain(vector, top_n=len(vector))
     z_by_name = {name: z for name, _, z in explanation}
     # A real scan needs BOTH: many distinct ports AND a high rate.
