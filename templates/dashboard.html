@@ -19,6 +19,7 @@
       <span class="brand-sub">Adaptive Cognitive Firewall</span>
     </div>
     <div class="topbar-right">
+      <button id="soundToggle" class="icon-btn" title="Toggle alert sound">🔔</button>
       <div class="health-dot" id="healthDot" title="Detection service status"></div>
       <div class="mode-indicator" id="modeIndicator">—</div>
     </div>
@@ -62,12 +63,14 @@
       </div>
 
       <div class="panel">
-        <div class="panel-header">
+        <div class="panel-header panel-header-with-controls">
           <h2>Alerts by Type</h2>
+          <button id="glossaryToggle" class="filter-btn">What do these mean?</button>
         </div>
         <div id="breakdownChart" class="breakdown-chart">
           <div class="empty">Loading…</div>
         </div>
+        <div id="glossaryPanel" class="glossary-panel glossary-hidden"></div>
       </div>
     </section>
 
@@ -87,6 +90,7 @@
             <option value="stealth_scan">Stealth scan</option>
             <option value="icmp_flood">ICMP flood</option>
             <option value="brute_force">Brute force</option>
+            <option value="invalid_flags">Invalid flags</option>
             <option value="ml_anomaly">ML anomaly</option>
           </select>
           <select id="feedbackFilter" class="filter-select">
@@ -140,6 +144,16 @@
       </div>
     </section>
   </main>
+
+  <div id="alertModalOverlay" class="modal-overlay modal-hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>Alert Details</h3>
+        <button id="modalClose" class="icon-btn">✕</button>
+      </div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
 
   <div id="toastContainer" class="toast-container"></div>
 

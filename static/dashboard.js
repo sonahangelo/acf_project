@@ -9,6 +9,7 @@ const CATEGORY_COLORS = {
   stealth_scan: "#ec4899",
   icmp_flood: "#84cc16",
   brute_force: "#f43f5e",
+  invalid_flags: "#fb923c",
   ml_anomaly: "#64748b",
 };
 const CATEGORY_LABELS = {
@@ -21,11 +22,29 @@ const CATEGORY_LABELS = {
   stealth_scan: "Stealth scan",
   icmp_flood: "ICMP flood",
   brute_force: "Brute force",
+  invalid_flags: "Invalid flags",
   ml_anomaly: "ML anomaly",
+};
+const CATEGORY_DESCRIPTIONS = {
+  port_scan: "One source contacting many distinct ports quickly -- reconnaissance to find open services.",
+  syn_flood: "Many connection attempts (SYNs) from one source without completing the handshake -- a denial-of-service technique.",
+  repeated_port_probe: "Many repeated attempts at the same single port -- distinct from a scan, which spreads across ports.",
+  exfiltration: "A single connection moving an unusually large amount of data over a sustained period.",
+  arp_spoofing: "An IP address suddenly claimed by a different MAC address -- the classic man-in-the-middle technique on a local network.",
+  dns_tunneling: "Data smuggled through DNS by encoding it into many unique or high-entropy subdomains.",
+  stealth_scan: "TCP packets with unusual flag combinations (NULL, FIN-only, or XMAS) designed to slip past simpler firewalls.",
+  icmp_flood: "A high rate of ICMP echo requests (pings) from one source -- a denial-of-service technique.",
+  brute_force: "Rapid repeated connection attempts to a known authentication port (SSH, RDP, etc.) -- likely a password-guessing attempt.",
+  invalid_flags: "TCP packets with logically contradictory flags (e.g. SYN+FIN) that only crafted/evasive tools produce.",
+  ml_anomaly: "Flagged by the general anomaly model as statistically unusual, without matching a specific known attack pattern.",
 };
 
 let searchDebounceTimer = null;
 let lastAlertsData = [];
+let seenAlertIds = new Set();
+let firstAlertsLoad = true;
+let soundEnabled = true;
+let audioCtx = null;
 
 async function fetchJSON(url, options) {
   const res = await fetch(url, options);
@@ -72,6 +91,25 @@ function showToast(message, type = "info") {
     toast.classList.remove("toast-visible");
     setTimeout(() => toast.remove(), 300);
   }, 3500);
+}
+
+function playAlertSound() {
+  if (!soundEnabled) return;
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.frequency.value = 880;
+    osc.type = "sine";
+    gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.25);
+  } catch (e) {
+    console.error("Sound playback failed:", e);
+  }
 }
 
 async function refreshSummary() {
@@ -154,6 +192,7 @@ async function markFeedback(alertId, label) {
     }
     showToast(`Marked as ${label.replace('_', ' ')}`, "success");
     await refreshAlerts();
+    closeModal();
   } catch (e) {
     showToast("Network error marking feedback", "error");
     console.error("markFeedback failed:", e);
@@ -199,6 +238,41 @@ function exportAlertsToCsv() {
   showToast(`Exported ${lastAlertsData.length} alerts`, "success");
 }
 
+function categoryOf(ruleReason) {
+  if (!ruleReason) return "ml_anomaly";
+  for (const key of Object.keys(CATEGORY_LABELS)) {
+    if (ruleReason.startsWith(key)) return key;
+  }
+  return "ml_anomaly";
+}
+
+function openModal(alert) {
+  const cat = categoryOf(alert.rule_reason);
+  const label = CATEGORY_LABELS[cat] || cat;
+  const color = CATEGORY_COLORS[cat] || "#64748b";
+  const feedback = alert.feedback || "none";
+
+  document.getElementById("modalBody").innerHTML = `
+    <div class="modal-field"><span class="modal-field-label">Time</span><span>${formatTime(alert.timestamp)}</span></div>
+    <div class="modal-field"><span class="modal-field-label">Source</span><span>${alert.src_ip}</span></div>
+    <div class="modal-field"><span class="modal-field-label">Destination</span><span>${alert.dst_ip}</span></div>
+    <div class="modal-field"><span class="modal-field-label">Score</span><span>${alert.score.toFixed(4)}</span></div>
+    <div class="modal-field"><span class="modal-field-label">Type</span><span><span class="type-dot" style="background:${color}"></span>${label}</span></div>
+    <div class="modal-field-full"><span class="modal-field-label">Rule Reason</span><div class="modal-longtext">${alert.rule_reason || '(none -- flagged by ML model)'}</div></div>
+    <div class="modal-field-full"><span class="modal-field-label">Feature Explanation</span><div class="modal-longtext">${alert.top_reasons || '(not recorded)'}</div></div>
+    <div class="modal-field"><span class="modal-field-label">Feedback</span><span class="feedback-tag feedback-${feedback}">${feedback}</span></div>
+    <div class="modal-actions">
+      <button class="action-btn action-btn-fp" onclick="markFeedback(${alert.id}, 'false_positive')">Mark False Positive</button>
+      <button class="action-btn action-btn-ct" onclick="markFeedback(${alert.id}, 'confirmed_threat')">Mark Confirmed Threat</button>
+    </div>
+  `;
+  document.getElementById("alertModalOverlay").classList.remove("modal-hidden");
+}
+
+function closeModal() {
+  document.getElementById("alertModalOverlay").classList.add("modal-hidden");
+}
+
 async function refreshAlerts() {
   const f = currentFilters();
   const params = new URLSearchParams();
@@ -213,22 +287,32 @@ async function refreshAlerts() {
     body.innerHTML = '<tr><td colspan="7" class="empty">No alerts match these filters</td></tr>';
     return;
   }
+
+  const newIds = alerts.filter(a => !seenAlertIds.has(a.id)).map(a => a.id);
+  if (!firstAlertsLoad && newIds.length > 0) {
+    playAlertSound();
+  }
+  alerts.forEach(a => seenAlertIds.add(a.id));
+  firstAlertsLoad = false;
+
   body.innerHTML = alerts.map(a => {
     const scoreClass = a.score < 0 ? "score-neg" : "score-pos";
     const reason = a.rule_reason || a.top_reasons || "";
     const feedback = a.feedback || "none";
+    const isNew = newIds.includes(a.id) ? "row-flash" : "";
 
     const fpActive = a.feedback === "false_positive" ? "action-btn-active" : "";
     const ctActive = a.feedback === "confirmed_threat" ? "action-btn-active" : "";
+    const alertJson = JSON.stringify(a).replace(/"/g, "&quot;");
 
-    return `<tr>
+    return `<tr class="${isNew}" onclick="openModal(${alertJson})">
       <td>${formatTime(a.timestamp)}</td>
       <td>${a.src_ip}</td>
       <td>${a.dst_ip}</td>
       <td class="${scoreClass}"><span class="score-pill ${scoreClass}">${a.score.toFixed(3)}</span></td>
       <td>${truncate(reason, 60)}</td>
       <td><span class="feedback-tag feedback-${feedback}">${feedback}</span></td>
-      <td class="actions-cell">
+      <td class="actions-cell" onclick="event.stopPropagation()">
         <button class="action-btn action-btn-fp ${fpActive}" onclick="markFeedback(${a.id}, 'false_positive')">FP</button>
         <button class="action-btn action-btn-ct ${ctActive}" onclick="markFeedback(${a.id}, 'confirmed_threat')">Threat</button>
       </td>
@@ -258,6 +342,19 @@ async function refreshBreakdown() {
       <div class="breakdown-count">${d.count}</div>
     </div>`;
   }).join("");
+}
+
+function renderGlossary() {
+  const panel = document.getElementById("glossaryPanel");
+  panel.innerHTML = Object.keys(CATEGORY_LABELS).map(key => `
+    <div class="glossary-item">
+      <div class="glossary-item-title">
+        <span class="type-dot" style="background:${CATEGORY_COLORS[key]}"></span>
+        ${CATEGORY_LABELS[key]}
+      </div>
+      <div class="glossary-item-desc">${CATEGORY_DESCRIPTIONS[key]}</div>
+    </div>
+  `).join("");
 }
 
 async function refreshBlocklist() {
@@ -338,6 +435,20 @@ document.getElementById("searchInput").addEventListener("input", () => {
 document.getElementById("reasonFilter").addEventListener("change", refreshAlerts);
 document.getElementById("feedbackFilter").addEventListener("change", refreshAlerts);
 document.getElementById("exportBtn").addEventListener("click", exportAlertsToCsv);
+document.getElementById("modalClose").addEventListener("click", closeModal);
+document.getElementById("alertModalOverlay").addEventListener("click", (e) => {
+  if (e.target.id === "alertModalOverlay") closeModal();
+});
+document.getElementById("glossaryToggle").addEventListener("click", () => {
+  const panel = document.getElementById("glossaryPanel");
+  panel.classList.toggle("glossary-hidden");
+  if (!panel.classList.contains("glossary-hidden")) renderGlossary();
+});
+document.getElementById("soundToggle").addEventListener("click", () => {
+  soundEnabled = !soundEnabled;
+  document.getElementById("soundToggle").textContent = soundEnabled ? "🔔" : "🔕";
+  showToast(soundEnabled ? "Alert sound on" : "Alert sound off", "info");
+});
 
 refreshAll();
 setInterval(refreshAll, REFRESH_MS);
