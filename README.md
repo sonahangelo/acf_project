@@ -163,3 +163,22 @@ and serves as a backstop: if training data later includes some normal
 ICMP traffic (e.g. you ping things occasionally), the ML model's
 sensitivity would normalize and the rule-based threshold becomes the
 primary defense against a real flood.
+
+## Brute-force login detection
+
+Watches for repeated connection attempts to known authentication ports
+(SSH 22, Telnet 23, FTP 21, RDP 3389, MySQL 3306, PostgreSQL 5432,
+MSSQL 1433, VNC 5900), using a lower/faster threshold (default: 5
+attempts) than the generic repeated_port_probe rule, since real
+brute-force tools hit these ports very rapidly.
+
+Checked before the generic port-probe rule, so a match on a known auth
+port gets the more specific "brute_force" label rather than the generic
+one, even if both thresholds would technically be crossed.
+
+Configurable via brute_force_ports (list) and brute_force_threshold
+in config.yml.
+
+Validated live: simulated SSH brute-force with hping3 (10 rapid SYN
+packets to port 22), correctly triggered exactly at the configured
+threshold (5th attempt) with the specific port identified in the alert.

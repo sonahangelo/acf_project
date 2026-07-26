@@ -77,7 +77,18 @@ def check_hybrid_rules(feats, model, vector, cfg):
     if feats.get("syn_count", 0) >= syn_threshold:
         return True, f"syn_flood (syn_count={feats.get('syn_count')} in {cfg.get('syn_window_seconds', 5)}s)"
 
-    # Repeated probing of one specific port.
+    # Brute-force login attempts: repeated connection attempts to a known
+    # authentication port, with a lower/faster threshold than the generic
+    # port-probe rule below, since real brute-force tools hit these ports
+    # very rapidly and we want to catch it earlier than a generic probe.
+    brute_force_ports = set(cfg.get("brute_force_ports", [22, 23, 21, 3389, 3306, 5432, 1433, 5900]))
+    brute_force_threshold = cfg.get("brute_force_threshold", 5)
+    if (feats.get("dst_port") in brute_force_ports
+            and feats.get("port_repeat_count", 0) >= brute_force_threshold):
+        return True, (f"brute_force (port={feats.get('dst_port')}, "
+                       f"attempts={feats.get('port_repeat_count')})")
+
+    # Repeated probing of one specific port (generic, any port).
     port_repeat_threshold = cfg.get("port_repeat_threshold", 8)
     if feats.get("port_repeat_count", 0) >= port_repeat_threshold:
         return True, f"repeated_port_probe (attempts={feats.get('port_repeat_count')} to dst_port={feats.get('dst_port')})"

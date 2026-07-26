@@ -378,3 +378,51 @@ def test_icmp_count_below_threshold_does_not_trigger():
     cfg = {"icmp_flood_threshold": 50}
     triggered, reason = check_hybrid_rules(feats, model, [0]*13, cfg)
     assert not triggered
+
+
+def test_brute_force_rule_triggers_on_ssh_port():
+    model = _fake_model_explain({})
+    feats = {"protocol": "TCP", "tcp_flags": "S", "dst_port": 22, "port_repeat_count": 6,
+              "syn_count": 0, "flow_byte_count": 0, "flow_duration": 0}
+    cfg = {"brute_force_ports": [22, 3389], "brute_force_threshold": 5}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*13, cfg)
+    assert triggered
+    assert "brute_force" in reason
+    assert "port=22" in reason
+
+
+def test_brute_force_below_threshold_does_not_trigger():
+    model = _fake_model_explain({})
+    feats = {"protocol": "TCP", "tcp_flags": "S", "dst_port": 22, "port_repeat_count": 3,
+              "syn_count": 0, "flow_byte_count": 0, "flow_duration": 0}
+    cfg = {"brute_force_ports": [22, 3389], "brute_force_threshold": 5,
+           "port_repeat_threshold": 8}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*13, cfg)
+    assert not triggered
+
+
+def test_brute_force_does_not_trigger_on_non_auth_port():
+    # Same repeat count, but port 80 isn't an auth port -- should fall
+    # through to the generic repeated_port_probe rule instead (different
+    # threshold), not brute_force.
+    model = _fake_model_explain({})
+    feats = {"protocol": "TCP", "tcp_flags": "S", "dst_port": 80, "port_repeat_count": 6,
+              "syn_count": 0, "flow_byte_count": 0, "flow_duration": 0}
+    cfg = {"brute_force_ports": [22, 3389], "brute_force_threshold": 5,
+           "port_repeat_threshold": 8}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*13, cfg)
+    assert not triggered  # 6 < port_repeat_threshold of 8, and not a brute-force port
+
+
+def test_brute_force_takes_priority_over_generic_port_probe():
+    # High enough to trigger BOTH rules -- brute_force should win since
+    # it's checked first and is the more specific/actionable label.
+    model = _fake_model_explain({})
+    feats = {"protocol": "TCP", "tcp_flags": "S", "dst_port": 3389, "port_repeat_count": 10,
+              "syn_count": 0, "flow_byte_count": 0, "flow_duration": 0}
+    cfg = {"brute_force_ports": [22, 3389], "brute_force_threshold": 5,
+           "port_repeat_threshold": 8}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*13, cfg)
+    assert triggered
+    assert "brute_force" in reason
+    assert "repeated_port_probe" not in reason

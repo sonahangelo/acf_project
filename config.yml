@@ -20,6 +20,8 @@ dns_entropy_threshold: 3.5
 dns_min_label_length: 20
 icmp_window_seconds: 5
 icmp_flood_threshold: 50
+brute_force_ports: [22, 23, 21, 3389, 3306, 5432, 1433, 5900]
+brute_force_threshold: 5
 
 whitelist:
   - "127.0.0.1"
