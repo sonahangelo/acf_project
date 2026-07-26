@@ -47,9 +47,22 @@ def run_learn_mode(cfg, count):
 
 
 def check_hybrid_rules(feats, model, vector, cfg):
+    # Stealth scan flag combinations (nmap -sN/-sF/-sX). These essentially
+    # never occur in legitimate traffic -- unlike SYN-based scans, they're
+    # specifically designed to evade SYN-flood/scan detectors, so this is
+    # a stateless, immediate check rather than a volume-based one.
+    if feats.get("protocol") == "TCP":
+        flags = feats.get("tcp_flags") or ""
+        flag_set = set(flags)
+        if flags == "":
+            return True, "stealth_scan (NULL scan: TCP packet with no flags set)"
+        if flag_set == {"F"}:
+            return True, "stealth_scan (FIN scan: only FIN flag set)"
+        if {"F", "P", "U"} <= flag_set:
+            return True, "stealth_scan (XMAS scan: FIN+PSH+URG flags set)"
+
     explanation = model.explain(vector, top_n=len(vector))
     z_by_name = {name: z for name, _, z in explanation}
-
     # A real scan needs BOTH: many distinct ports AND a high rate.
     # High scan_pps alone (e.g. rapid DNS queries, all to port 53) isn't a
     # scan -- it's just a burst to one destination.

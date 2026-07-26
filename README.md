@@ -126,3 +126,22 @@ dns_entropy_threshold, dns_min_label_length in config.yml.
 Validated live: crafted 20 DNS queries with random subdomains under a
 fake base domain, correctly triggered exactly at the configured
 threshold (15th distinct subdomain).
+
+## Stealth scan detection (NULL/FIN/XMAS)
+
+Catches nmap's stealth scan techniques (-sN, -sF, -sX), which deliberately
+avoid a normal SYN specifically to evade SYN-based scan/flood detectors:
+
+  - NULL scan: TCP packet with no flags set at all
+  - FIN scan: only the FIN flag set (no ACK -- a normal connection close
+    is FIN+ACK, which is NOT flagged)
+  - XMAS scan: FIN+PSH+URG all set together
+
+These flag combinations essentially never occur in legitimate traffic, so
+this is a stateless, immediate check (no tracking window needed) --
+added directly to check_hybrid_rules() rather than a separate tracker
+module like ARP/DNS required.
+
+Validated live with real nmap -sN/-sF/-sX scans against a non-whitelisted
+loopback address; confirmed via captured traffic (correct flag values:
+'', 'F', 'FPU') and a logged alert with the correct reason.

@@ -294,3 +294,68 @@ def test_check_dns_tunnel_ignores_dns_responses():
 
     triggered, reason = check_dns_tunnel(pkt, tracker, cfg)
     assert not triggered
+
+
+def test_null_scan_detected():
+    model = _fake_model_explain({})
+    feats = {"protocol": "TCP", "tcp_flags": "", "syn_count": 0, "port_repeat_count": 0,
+              "flow_byte_count": 0, "flow_duration": 0}
+    cfg = {}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*12, cfg)
+    assert triggered
+    assert "NULL scan" in reason
+
+
+def test_fin_scan_detected():
+    model = _fake_model_explain({})
+    feats = {"protocol": "TCP", "tcp_flags": "F", "syn_count": 0, "port_repeat_count": 0,
+              "flow_byte_count": 0, "flow_duration": 0}
+    cfg = {}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*12, cfg)
+    assert triggered
+    assert "FIN scan" in reason
+
+
+def test_xmas_scan_detected():
+    model = _fake_model_explain({})
+    feats = {"protocol": "TCP", "tcp_flags": "FPU", "syn_count": 0, "port_repeat_count": 0,
+              "flow_byte_count": 0, "flow_duration": 0}
+    cfg = {}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*12, cfg)
+    assert triggered
+    assert "XMAS scan" in reason
+
+
+def test_normal_syn_ack_not_flagged_as_stealth_scan():
+    model = _fake_model_explain({"scan_distinct_ports": 0.1, "scan_pps": -0.5})
+    feats = {"protocol": "TCP", "tcp_flags": "SA", "syn_count": 1, "port_repeat_count": 1,
+              "flow_byte_count": 5000, "flow_duration": 2, "scan_pps": 5, "scan_distinct_ports": 1}
+    cfg = {"syn_flood_threshold": 20, "port_repeat_threshold": 8,
+           "exfil_bytes_threshold": 5_000_000, "exfil_min_duration_seconds": 5,
+           "scan_zscore_threshold": 3.0, "scan_min_distinct_ports": 5}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*12, cfg)
+    assert not triggered
+
+
+def test_fin_ack_normal_close_not_flagged():
+    # A normal connection close (FIN+ACK) should NOT trigger the FIN-scan
+    # rule -- only a BARE FIN with nothing else set is the stealth signature.
+    model = _fake_model_explain({"scan_distinct_ports": 0.1, "scan_pps": -0.5})
+    feats = {"protocol": "TCP", "tcp_flags": "FA", "syn_count": 0, "port_repeat_count": 1,
+              "flow_byte_count": 5000, "flow_duration": 2, "scan_pps": 5, "scan_distinct_ports": 1}
+    cfg = {"syn_flood_threshold": 20, "port_repeat_threshold": 8,
+           "exfil_bytes_threshold": 5_000_000, "exfil_min_duration_seconds": 5,
+           "scan_zscore_threshold": 3.0, "scan_min_distinct_ports": 5}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*12, cfg)
+    assert not triggered
+
+
+def test_udp_traffic_not_affected_by_stealth_scan_check():
+    model = _fake_model_explain({"scan_distinct_ports": 0.1, "scan_pps": -0.5})
+    feats = {"protocol": "UDP", "tcp_flags": "", "syn_count": 0, "port_repeat_count": 0,
+              "flow_byte_count": 100, "flow_duration": 1, "scan_pps": 5, "scan_distinct_ports": 1}
+    cfg = {"syn_flood_threshold": 20, "port_repeat_threshold": 8,
+           "exfil_bytes_threshold": 5_000_000, "exfil_min_duration_seconds": 5,
+           "scan_zscore_threshold": 3.0, "scan_min_distinct_ports": 5}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*12, cfg)
+    assert not triggered
