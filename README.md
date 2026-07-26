@@ -201,3 +201,31 @@ SYN+RST uses identical logic (confirmed via unit tests); live confirmation
 was complicated by the blocklist dedup correctly suppressing a repeat
 alert for the same already-blocked test source IP within the same
 process lifetime -- a known, correct behavior, not a detection gap.
+
+## TTL-based IP spoofing detection
+
+Real hosts send packets with a consistent TTL, derived from a fixed OS
+starting value (64 Linux/Mac, 128 Windows, 255 some network gear) minus
+hop count on a stable network path. If the same source IP suddenly shows
+a wildly different TTL, that's a strong signal of IP spoofing -- the
+attacker's actual path/OS doesn't match the real host's.
+
+Mirrors arp_monitor.py's design: baseline TTL fixed on first sighting per
+IP, flags deviations beyond ttl_anomaly_threshold (default: 20).
+
+LIMITATION: legitimate route changes can occasionally shift TTL by a
+few hops (rare false positive); the baseline doesn't adapt over time.
+
+Validated live: crafted two ICMP packets with the same spoofed source IP
+but TTL 64 then TTL 128 -- correctly triggered with the exact baseline
+and diff values in the alert reason.
+
+NOTE: this session also surfaced a real recurring bug class -- adding a
+column to TRAFFIC_COLUMNS in db.py doesn't retroactively alter an
+already-created SQLite table (CREATE TABLE IF NOT EXISTS is a no-op on
+existing tables). Fixed by recreating the DB; added a permanent test
+(test_traffic_columns_match_actual_db_schema) that checks a freshly
+created table's real schema against TRAFFIC_COLUMNS. This catches the
+Python-list-vs-fresh-table case but not "existing deployed DB is stale"
+-- when TRAFFIC_COLUMNS changes, the DB must be recreated (backup/
+archive first via retention.py if the data matters).

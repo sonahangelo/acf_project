@@ -39,6 +39,7 @@ def extract_features(pkt):
         "protocol": protocol,
         "packet_length": len(pkt),
         "tcp_flags": tcp_flags,
+	"ttl": ip_layer.ttl,
     }
 
 

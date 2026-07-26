@@ -12,6 +12,7 @@ from capture import start_capture
 from features import extract_features, to_model_vector, extract_arp_features, extract_dns_features
 from dns_monitor import DnsTunnelTracker, shannon_entropy
 from flow_tracker import FlowTracker
+from ttl_monitor import TtlTracker
 from arp_monitor import ArpBindingTracker
 from ai_model import AnomalyModel
 from decision import decide
@@ -125,6 +126,23 @@ def check_arp_spoof(arp_feats, tracker):
                    f"mac={arp_feats['src_mac']}, previously mac={previous_mac})")
         return True, reason
     return False, None
+def check_ttl_anomaly(feats, tracker, cfg):
+    """
+    Returns (triggered: bool, reason: str or None).
+    """
+    ttl = feats.get("ttl")
+    if ttl is None:
+        return False, None
+
+    baseline, diff = tracker.check(feats["src_ip"], ttl)
+    if baseline is None:
+        return False, None  # first sighting, nothing to compare yet
+
+    threshold = cfg.get("ttl_anomaly_threshold", 20)
+    if diff >= threshold:
+        return True, (f"ttl_anomaly (ip={feats['src_ip']} ttl={ttl} vs baseline={baseline}, "
+                       f"diff={diff} -- possible IP spoofing)")
+    return False, None
 
 def check_dns_tunnel(pkt, tracker, cfg):
     """
@@ -164,6 +182,7 @@ def run_detect_mode(cfg):
         print(f"[main] Loaded {len(already_alerted)} previously blocked IP(s) from database")
     arp_tracker = ArpBindingTracker()
     dns_tracker = DnsTunnelTracker(window_seconds=cfg.get("dns_window_seconds", 10))
+    ttl_tracker = TtlTracker()
     tracker = FlowTracker(
         scan_window_seconds=cfg.get("scan_window_seconds", 5),
         flow_timeout_seconds=cfg.get("flow_timeout_seconds", 30),
@@ -203,6 +222,11 @@ def run_detect_mode(cfg):
             if dns_triggered:
                 rule_triggered = True
                 rule_reason = dns_reason if not rule_reason else f"{rule_reason}; {dns_reason}"
+
+            ttl_triggered, ttl_reason = check_ttl_anomaly(feats, ttl_tracker, cfg)
+            if ttl_triggered:
+                rule_triggered = True
+                rule_reason = ttl_reason if not rule_reason else f"{rule_reason}; {ttl_reason}"
 
             effective_label = -1 if rule_triggered else label
 

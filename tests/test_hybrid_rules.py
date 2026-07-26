@@ -472,3 +472,53 @@ def test_syn_fin_ack_still_flagged_even_with_other_flags():
     triggered, reason = check_hybrid_rules(feats, model, [0]*13, cfg)
     assert triggered
     assert "invalid_flags" in reason
+
+
+def test_check_ttl_anomaly_flags_large_deviation():
+    from main import check_ttl_anomaly
+    from ttl_monitor import TtlTracker
+
+    tracker = TtlTracker()
+    tracker.check("1.2.3.4", 64)  # establish baseline
+
+    feats = {"src_ip": "1.2.3.4", "ttl": 128}
+    cfg = {"ttl_anomaly_threshold": 20}
+    triggered, reason = check_ttl_anomaly(feats, tracker, cfg)
+    assert triggered
+    assert "ttl_anomaly" in reason
+    assert "1.2.3.4" in reason
+
+
+def test_check_ttl_anomaly_ignores_small_deviation():
+    from main import check_ttl_anomaly
+    from ttl_monitor import TtlTracker
+
+    tracker = TtlTracker()
+    tracker.check("1.2.3.4", 64)
+
+    feats = {"src_ip": "1.2.3.4", "ttl": 62}  # small route-change-like diff
+    cfg = {"ttl_anomaly_threshold": 20}
+    triggered, reason = check_ttl_anomaly(feats, tracker, cfg)
+    assert not triggered
+
+
+def test_check_ttl_anomaly_first_sighting_not_flagged():
+    from main import check_ttl_anomaly
+    from ttl_monitor import TtlTracker
+
+    tracker = TtlTracker()
+    feats = {"src_ip": "1.2.3.4", "ttl": 64}
+    cfg = {"ttl_anomaly_threshold": 20}
+    triggered, reason = check_ttl_anomaly(feats, tracker, cfg)
+    assert not triggered
+
+
+def test_check_ttl_anomaly_handles_missing_ttl():
+    from main import check_ttl_anomaly
+    from ttl_monitor import TtlTracker
+
+    tracker = TtlTracker()
+    feats = {"src_ip": "1.2.3.4", "ttl": None}
+    cfg = {"ttl_anomaly_threshold": 20}
+    triggered, reason = check_ttl_anomaly(feats, tracker, cfg)
+    assert not triggered
