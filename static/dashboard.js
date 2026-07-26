@@ -10,6 +10,7 @@ const CATEGORY_COLORS = {
   icmp_flood: "#84cc16",
   brute_force: "#f43f5e",
   invalid_flags: "#fb923c",
+  ttl_anomaly: "#a3e635",
   ml_anomaly: "#64748b",
 };
 const CATEGORY_LABELS = {
@@ -23,6 +24,7 @@ const CATEGORY_LABELS = {
   icmp_flood: "ICMP flood",
   brute_force: "Brute force",
   invalid_flags: "Invalid flags",
+  ttl_anomaly: "TTL anomaly",
   ml_anomaly: "ML anomaly",
 };
 const CATEGORY_DESCRIPTIONS = {
@@ -36,6 +38,7 @@ const CATEGORY_DESCRIPTIONS = {
   icmp_flood: "A high rate of ICMP echo requests (pings) from one source -- a denial-of-service technique.",
   brute_force: "Rapid repeated connection attempts to a known authentication port (SSH, RDP, etc.) -- likely a password-guessing attempt.",
   invalid_flags: "TCP packets with logically contradictory flags (e.g. SYN+FIN) that only crafted/evasive tools produce.",
+  ttl_anomaly: "The same source IP suddenly showing a very different TTL -- a strong signal of IP spoofing.",
   ml_anomaly: "Flagged by the general anomaly model as statistically unusual, without matching a specific known attack pattern.",
 };
 
@@ -45,6 +48,8 @@ let seenAlertIds = new Set();
 let firstAlertsLoad = true;
 let soundEnabled = true;
 let audioCtx = null;
+let currentRange = "30m";
+const RANGE_LABELS = { "30m": "last 30 min", "1h": "last hour", "6h": "last 6 hours", "24h": "last 24 hours" };
 
 async function fetchJSON(url, options) {
   const res = await fetch(url, options);
@@ -376,6 +381,29 @@ async function refreshBlocklist() {
   }).join("");
 }
 
+async function refreshTopOffenders() {
+  const data = await fetchJSON("/api/top-offenders?limit=10");
+  const body = document.getElementById("offendersBody");
+  if (data.length === 0) {
+    body.innerHTML = '<tr><td colspan="5" class="empty">No alerts yet</td></tr>';
+    return;
+  }
+  body.innerHTML = data.map(o => {
+    const cat = categoryOf(o.last_reason);
+    const label = CATEGORY_LABELS[cat] || cat;
+    const statusBadge = o.is_blocked
+      ? '<span class="feedback-tag feedback-confirmed_threat">blocked</span>'
+      : '<span class="feedback-tag feedback-none">not blocked</span>';
+    return `<tr>
+      <td>${o.src_ip}</td>
+      <td>${o.alert_count}</td>
+      <td>${formatTime(o.last_seen)}</td>
+      <td>${truncate(label + (o.last_reason ? ': ' + o.last_reason : ''), 50)}</td>
+      <td>${statusBadge}</td>
+    </tr>`;
+  }).join("");
+}
+
 function drawSparkline(data) {
   const canvas = document.getElementById("sparkline");
   const ctx = canvas.getContext("2d");
@@ -416,13 +444,13 @@ function drawSparkline(data) {
 }
 
 async function refreshTimeline() {
-  const data = await fetchJSON("/api/traffic-timeline");
+  const data = await fetchJSON("/api/traffic-timeline?range=" + currentRange);
   drawSparkline(data);
 }
 
 async function refreshAll() {
   try {
-    await Promise.all([refreshSummary(), refreshHealth(), refreshAlerts(), refreshBreakdown(), refreshBlocklist(), refreshTimeline()]);
+    await Promise.all([refreshSummary(), refreshHealth(), refreshAlerts(), refreshBreakdown(), refreshBlocklist(), refreshTimeline(), refreshTopOffenders()]);
   } catch (e) {
     console.error("Refresh failed:", e);
   }
@@ -443,6 +471,15 @@ document.getElementById("glossaryToggle").addEventListener("click", () => {
   const panel = document.getElementById("glossaryPanel");
   panel.classList.toggle("glossary-hidden");
   if (!panel.classList.contains("glossary-hidden")) renderGlossary();
+});
+document.querySelectorAll(".range-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".range-btn").forEach(b => b.classList.remove("range-btn-active"));
+    btn.classList.add("range-btn-active");
+    currentRange = btn.dataset.range;
+    document.getElementById("sparklineTitle").textContent = "Traffic — " + RANGE_LABELS[currentRange];
+    refreshTimeline();
+  });
 });
 document.getElementById("soundToggle").addEventListener("click", () => {
   soundEnabled = !soundEnabled;

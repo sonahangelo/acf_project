@@ -572,3 +572,28 @@ tbody tr {
 @media (max-width: 600px) {
   .modal-body { grid-template-columns: 1fr; }
 }
+
+.range-btns {
+  display: flex;
+  gap: 4px;
+}
+.range-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  padding: 4px 9px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.range-btn:hover {
+  border-color: var(--info);
+  color: var(--info);
+}
+.range-btn-active {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: var(--info);
+  color: var(--info);
+}

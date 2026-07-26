@@ -56,8 +56,14 @@
 
     <section class="two-col">
       <div class="panel">
-        <div class="panel-header">
-          <h2>Traffic — last 30 min</h2>
+        <div class="panel-header panel-header-with-controls">
+          <h2 id="sparklineTitle">Traffic — last 30 min</h2>
+          <div class="range-btns">
+            <button class="range-btn range-btn-active" data-range="30m">30m</button>
+            <button class="range-btn" data-range="1h">1h</button>
+            <button class="range-btn" data-range="6h">6h</button>
+            <button class="range-btn" data-range="24h">24h</button>
+          </div>
         </div>
         <canvas id="sparkline" height="70"></canvas>
       </div>
@@ -71,6 +77,28 @@
           <div class="empty">Loading…</div>
         </div>
         <div id="glossaryPanel" class="glossary-panel glossary-hidden"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2>Top Offenders</h2>
+      </div>
+      <div class="table-wrap">
+        <table id="offendersTable">
+          <thead>
+            <tr>
+              <th>Source IP</th>
+              <th>Alert Count</th>
+              <th>Last Seen</th>
+              <th>Last Reason</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="offendersBody">
+            <tr><td colspan="5" class="empty">Loading…</td></tr>
+          </tbody>
+        </table>
       </div>
     </section>
 

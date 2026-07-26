@@ -209,15 +209,49 @@ def api_unblock(ip):
     return jsonify({"ip": ip, "unblocked": True})
 
 
+TIMELINE_RANGES = {
+    "30m": (30 * 60, 60),
+    "1h": (60 * 60, 120),
+    "6h": (6 * 60 * 60, 600),
+    "24h": (24 * 60 * 60, 1800),
+}
+
+
 @app.route("/api/traffic-timeline")
 def api_traffic_timeline():
+    range_key = request.args.get("range", "30m")
+    window_seconds, bucket_seconds = TIMELINE_RANGES.get(range_key, TIMELINE_RANGES["30m"])
+
     conn = get_db()
     now = time.time()
-    window_start = now - (30 * 60)
+    window_start = now - window_seconds
     rows = conn.execute(
-        "SELECT CAST(timestamp / 60 AS INTEGER) * 60 AS bucket, COUNT(*) as count "
-        "FROM traffic WHERE timestamp >= ? GROUP BY bucket ORDER BY bucket",
+        f"SELECT CAST(timestamp / {bucket_seconds} AS INTEGER) * {bucket_seconds} AS bucket, "
+        f"COUNT(*) as count FROM traffic WHERE timestamp >= ? GROUP BY bucket ORDER BY bucket",
         (window_start,),
+    ).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/top-offenders")
+def api_top_offenders():
+    limit = min(int(request.args.get("limit", 10)), 50)
+    conn = get_db()
+    rows = conn.execute(
+        """
+        SELECT a.src_ip,
+               COUNT(*) as alert_count,
+               MAX(a.timestamp) as last_seen,
+               (SELECT rule_reason FROM alerts a2
+                WHERE a2.src_ip = a.src_ip ORDER BY a2.id DESC LIMIT 1) as last_reason,
+               (SELECT 1 FROM blocked_ips b WHERE b.ip = a.src_ip) as is_blocked
+        FROM alerts a
+        GROUP BY a.src_ip
+        ORDER BY alert_count DESC
+        LIMIT ?
+        """,
+        (limit,),
     ).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
