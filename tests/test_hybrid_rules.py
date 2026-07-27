@@ -522,3 +522,45 @@ def test_check_ttl_anomaly_handles_missing_ttl():
     cfg = {"ttl_anomaly_threshold": 20}
     triggered, reason = check_ttl_anomaly(feats, tracker, cfg)
     assert not triggered
+
+
+def test_smurf_attack_detected_on_broadcast_address():
+    model = _fake_model_explain({})
+    feats = {"protocol": "ICMP", "dst_ip": "192.168.1.255", "syn_count": 0,
+              "port_repeat_count": 0, "flow_byte_count": 0, "flow_duration": 0}
+    cfg = {}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*13, cfg)
+    assert triggered
+    assert "smurf_attack" in reason
+
+
+def test_smurf_attack_detected_on_limited_broadcast():
+    model = _fake_model_explain({})
+    feats = {"protocol": "ICMP", "dst_ip": "255.255.255.255", "syn_count": 0,
+              "port_repeat_count": 0, "flow_byte_count": 0, "flow_duration": 0}
+    cfg = {}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*13, cfg)
+    assert triggered
+    assert "smurf_attack" in reason
+
+
+def test_normal_icmp_to_unicast_not_flagged_as_smurf():
+    model = _fake_model_explain({})
+    feats = {"protocol": "ICMP", "dst_ip": "8.8.8.8", "syn_count": 0,
+              "port_repeat_count": 0, "flow_byte_count": 0, "flow_duration": 0,
+              "icmp_count": 1}
+    cfg = {"icmp_flood_threshold": 50}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*13, cfg)
+    assert not triggered
+
+
+def test_non_icmp_traffic_to_broadcast_address_not_flagged_as_smurf():
+    # Only ICMP triggers this rule -- a UDP packet to a .255 address
+    # (uncommon but not inherently a smurf signature) should fall through.
+    model = _fake_model_explain({"scan_distinct_ports": 0.1, "scan_pps": -0.5})
+    feats = {"protocol": "UDP", "dst_ip": "192.168.1.255", "syn_count": 0,
+              "port_repeat_count": 1, "flow_byte_count": 100, "flow_duration": 1,
+              "scan_pps": 5, "scan_distinct_ports": 1}
+    cfg = {"port_repeat_threshold": 8, "brute_force_ports": [], "brute_force_threshold": 5}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*13, cfg)
+    assert not triggered

@@ -72,8 +72,20 @@ def check_hybrid_rules(feats, model, vector, cfg):
         if {"S", "R"} <= flag_set:
             return True, "invalid_flags (SYN+RST set together: contradictory, crafted packet)"
 
+    # Smurf attack: ICMP echo requests directed at a broadcast address.
+    # A smurf attacker sends a spoofed-source ICMP echo to a network's
+    # broadcast address so every host on that network replies to the
+    # victim, amplifying traffic. Legitimate hosts essentially never
+    # ping a broadcast address, so this is a reliable, stateless signal.
+    if feats.get("protocol") == "ICMP":
+        dst_ip = feats.get("dst_ip") or ""
+        is_broadcast = dst_ip == "255.255.255.255" or dst_ip.endswith(".255")
+        if is_broadcast:
+            return True, f"smurf_attack (ICMP to broadcast address {dst_ip} -- possible amplification attack)"
+
     explanation = model.explain(vector, top_n=len(vector))
     z_by_name = {name: z for name, _, z in explanation}
+
     # A real scan needs BOTH: many distinct ports AND a high rate.
     # High scan_pps alone (e.g. rapid DNS queries, all to port 53) isn't a
     # scan -- it's just a burst to one destination.
@@ -103,7 +115,7 @@ def check_hybrid_rules(feats, model, vector, cfg):
     if feats.get("port_repeat_count", 0) >= port_repeat_threshold:
         return True, f"repeated_port_probe (attempts={feats.get('port_repeat_count')} to dst_port={feats.get('dst_port')})"
 
-# ICMP flood (ping flood).
+    # ICMP flood (ping flood).
     icmp_threshold = cfg.get("icmp_flood_threshold", 50)
     if feats.get("icmp_count", 0) >= icmp_threshold:
         return True, f"icmp_flood (icmp_count={feats.get('icmp_count')} in {cfg.get('icmp_window_seconds', 5)}s)"

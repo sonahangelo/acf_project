@@ -229,3 +229,24 @@ created table's real schema against TRAFFIC_COLUMNS. This catches the
 Python-list-vs-fresh-table case but not "existing deployed DB is stale"
 -- when TRAFFIC_COLUMNS changes, the DB must be recreated (backup/
 archive first via retention.py if the data matters).
+
+## Smurf attack detection
+
+Detects ICMP echo requests directed at a broadcast address (255.255.255.255
+or a x.x.x.255-style subnet broadcast). In a real smurf attack, this is
+sent with a spoofed source (the victim's IP) to a network's broadcast
+address, causing every host on that network to reply to the victim --
+amplifying traffic. Legitimate hosts essentially never ping a broadcast
+address, so this is a reliable, stateless signal (same pattern as the
+stealth-scan and invalid-flags checks -- no tracker needed).
+
+Validated live: crafted an ICMP echo to 255.255.255.255 via Scapy,
+correctly triggered with the destination address identified in the
+alert reason.
+
+NOTE: broadcast-destined packets route via the default interface (eth0),
+NOT loopback, regardless of ACF's configured interface setting -- this
+tripped up initial live testing (packets sent while interface="lo" were
+never captured, since they never touched the loopback interface at all).
+Confirmed via tcpdump -i any during debugging. Worth remembering for any
+future broadcast-related testing.
