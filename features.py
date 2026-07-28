@@ -6,7 +6,7 @@ features are merged in by main.py via FlowTracker before logging/prediction.
 """
 
 import time
-from scapy.all import IP, TCP, UDP, ARP, DNS, DNSQR, ICMP
+from scapy.all import IP, TCP, UDP, ARP, DNS, DNSQR, ICMP, DHCP, BOOTP
 
 
 def extract_features(pkt):
@@ -119,4 +119,30 @@ def extract_dns_features(pkt):
         "leftmost_label": leftmost_label,
         "qtype": pkt[DNSQR].qtype,
         "packet_length": len(pkt),
+    }
+def extract_dhcp_features(pkt):
+    """
+    Extract fields from a DHCP server response (OFFER or ACK). Returns
+    None if this isn't a DHCP server message -- client requests
+    (DISCOVER, REQUEST) aren't relevant here, only server responses that
+    establish "who is acting as the DHCP server."
+    """
+    import time
+    if not (pkt.haslayer(DHCP) and pkt.haslayer(IP)):
+        return None
+
+    msg_type = None
+    for opt in pkt[DHCP].options:
+        if isinstance(opt, tuple) and opt[0] == "message-type":
+            msg_type = opt[1]
+            break
+
+    # DHCP message types: 2 = OFFER, 5 = ACK (both are server -> client)
+    if msg_type not in (2, 5):
+        return None
+
+    return {
+        "timestamp": time.time(),
+        "server_ip": pkt[IP].src,
+        "msg_type": msg_type,
     }

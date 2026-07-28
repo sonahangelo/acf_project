@@ -283,3 +283,37 @@ piped through sudo can silently break time.sleep() timing (all packets
 ending up clustered together instead of spread apart) -- likely a stdin/
 pipe interaction. Saving the script to a file and running it directly
 (sudo <python3-acf> /path/to/script.py) resolved this reliably.
+
+## Rogue DHCP server detection
+
+Tracks which IP(s) have been observed sending DHCP server responses
+(OFFER or ACK messages). Most home/small networks have exactly one
+legitimate DHCP server (the router). If a second, different IP suddenly
+starts responding as a DHCP server, that's flagged as a possible rogue
+DHCP server -- a common man-in-the-middle technique, since a malicious
+server can hand out a fake gateway or DNS server to any new device that
+joins the network.
+
+Mirrors arp_monitor.py's design: first server seen establishes the
+baseline (not flagged), any different server after that is flagged.
+
+LIMITATION: legitimate DHCP failover/redundancy setups (multiple real
+servers by design) would cause a one-time false positive on the second
+legitimate server.
+
+HONEST NOTE on live validation: WSL's virtual networking blocks outbound
+UDP broadcast traffic entirely in this environment (confirmed via
+tcpdump -i any showing zero packets for ANY broadcast UDP, not just
+DHCP ports specifically or spoofed-source packets -- tested with an
+unrelated port/payload too). This is a real environmental limitation,
+not a detection flaw. ICMP broadcast (used for the smurf attack test)
+works fine in this same environment, so the restriction appears specific
+to UDP broadcast.
+
+The detection logic itself IS validated: check_rogue_dhcp() was called
+directly with real, correctly-constructed Scapy DHCP packet objects
+(bypassing only the network transmission step WSL blocks), confirming
+correct parsing, baseline establishment, and rogue-server flagging with
+the exact expected reason text. This exercises the same code path live
+capture uses -- just without needing the packets to traverse WSL's
+network stack, which isn't possible for broadcast UDP in this setup.

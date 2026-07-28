@@ -586,3 +586,44 @@ def test_slow_flow_count_below_threshold_does_not_trigger():
            "brute_force_ports": [], "brute_force_threshold": 5}
     triggered, reason = check_hybrid_rules(feats, model, [0]*14, cfg)
     assert not triggered
+
+
+def _make_dhcp_packet(server_ip, msg_type):
+    from scapy.all import IP, UDP, BOOTP, DHCP
+    return (IP(src=server_ip, dst="255.255.255.255") / UDP(sport=67, dport=68) /
+            BOOTP(op=2) / DHCP(options=[("message-type", msg_type), "end"]))
+
+
+def test_check_rogue_dhcp_first_server_not_flagged():
+    from main import check_rogue_dhcp
+    from dhcp_monitor import DhcpServerTracker
+
+    tracker = DhcpServerTracker()
+    pkt = _make_dhcp_packet("192.168.1.1", 2)  # OFFER
+    triggered, reason = check_rogue_dhcp(pkt, tracker)
+    assert not triggered
+
+
+def test_check_rogue_dhcp_second_server_flagged():
+    from main import check_rogue_dhcp
+    from dhcp_monitor import DhcpServerTracker
+
+    tracker = DhcpServerTracker()
+    check_rogue_dhcp(_make_dhcp_packet("192.168.1.1", 2), tracker)  # establish baseline
+
+    pkt = _make_dhcp_packet("10.0.0.99", 5)  # ACK from a different server
+    triggered, reason = check_rogue_dhcp(pkt, tracker)
+    assert triggered
+    assert "rogue_dhcp" in reason
+    assert "10.0.0.99" in reason
+
+
+def test_check_rogue_dhcp_ignores_non_dhcp_packets():
+    from main import check_rogue_dhcp
+    from dhcp_monitor import DhcpServerTracker
+    from scapy.all import IP, TCP
+
+    tracker = DhcpServerTracker()
+    pkt = IP(src="1.2.3.4", dst="5.6.7.8") / TCP(dport=80)
+    triggered, reason = check_rogue_dhcp(pkt, tracker)
+    assert not triggered

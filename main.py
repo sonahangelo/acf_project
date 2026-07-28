@@ -9,10 +9,11 @@ import argparse
 
 from scapy.all import ARP
 from capture import start_capture
-from features import extract_features, to_model_vector, extract_arp_features, extract_dns_features
+from features import extract_features, to_model_vector, extract_arp_features, extract_dns_features, extract_dhcp_features
 from dns_monitor import DnsTunnelTracker, shannon_entropy
 from flow_tracker import FlowTracker
 from ttl_monitor import TtlTracker
+from dhcp_monitor import DhcpServerTracker
 from arp_monitor import ArpBindingTracker
 from ai_model import AnomalyModel
 from decision import decide
@@ -164,6 +165,20 @@ def check_ttl_anomaly(feats, tracker, cfg):
         return True, (f"ttl_anomaly (ip={feats['src_ip']} ttl={ttl} vs baseline={baseline}, "
                        f"diff={diff} -- possible IP spoofing)")
     return False, None
+def check_rogue_dhcp(pkt, tracker):
+    """
+    Returns (triggered: bool, reason: str or None).
+    """
+    dhcp_feats = extract_dhcp_features(pkt)
+    if not dhcp_feats:
+        return False, None
+
+    is_rogue = tracker.check(dhcp_feats["server_ip"])
+    if is_rogue:
+        msg_label = "OFFER" if dhcp_feats["msg_type"] == 2 else "ACK"
+        return True, (f"rogue_dhcp (new DHCP server {dhcp_feats['server_ip']} sent "
+                       f"{msg_label} -- possible man-in-the-middle setup)")
+    return False, None
 
 def check_dns_tunnel(pkt, tracker, cfg):
     """
@@ -204,6 +219,7 @@ def run_detect_mode(cfg):
     arp_tracker = ArpBindingTracker()
     dns_tracker = DnsTunnelTracker(window_seconds=cfg.get("dns_window_seconds", 10))
     ttl_tracker = TtlTracker()
+    dhcp_tracker = DhcpServerTracker()
     tracker = FlowTracker(
         scan_window_seconds=cfg.get("scan_window_seconds", 5),
         flow_timeout_seconds=cfg.get("flow_timeout_seconds", 30),
@@ -250,6 +266,11 @@ def run_detect_mode(cfg):
             if ttl_triggered:
                 rule_triggered = True
                 rule_reason = ttl_reason if not rule_reason else f"{rule_reason}; {ttl_reason}"
+
+            dhcp_triggered, dhcp_reason = check_rogue_dhcp(pkt, dhcp_tracker)
+            if dhcp_triggered:
+                rule_triggered = True
+                rule_reason = dhcp_reason if not rule_reason else f"{rule_reason}; {dhcp_reason}"
 
             effective_label = -1 if rule_triggered else label
 
