@@ -564,3 +564,25 @@ def test_non_icmp_traffic_to_broadcast_address_not_flagged_as_smurf():
     cfg = {"port_repeat_threshold": 8, "brute_force_ports": [], "brute_force_threshold": 5}
     triggered, reason = check_hybrid_rules(feats, model, [0]*13, cfg)
     assert not triggered
+
+
+def test_slowloris_rule_triggers_above_threshold():
+    model = _fake_model_explain({})
+    feats = {"protocol": "TCP", "tcp_flags": "A", "dst_port": 80, "syn_count": 0,
+              "port_repeat_count": 0, "flow_byte_count": 0, "flow_duration": 0,
+              "slow_flow_count": 12}
+    cfg = {"slowloris_min_connections": 10}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*14, cfg)
+    assert triggered
+    assert "slowloris" in reason
+
+
+def test_slow_flow_count_below_threshold_does_not_trigger():
+    model = _fake_model_explain({"scan_distinct_ports": 0.1, "scan_pps": -0.5})
+    feats = {"protocol": "TCP", "tcp_flags": "A", "dst_port": 80, "syn_count": 0,
+              "port_repeat_count": 3, "flow_byte_count": 0, "flow_duration": 0,
+              "slow_flow_count": 3, "scan_pps": 5, "scan_distinct_ports": 1}
+    cfg = {"slowloris_min_connections": 10, "port_repeat_threshold": 8,
+           "brute_force_ports": [], "brute_force_threshold": 5}
+    triggered, reason = check_hybrid_rules(feats, model, [0]*14, cfg)
+    assert not triggered

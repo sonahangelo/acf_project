@@ -58,6 +58,7 @@ MODEL_FEATURE_COLUMNS = [
     "syn_count",
     "port_repeat_count",
     "icmp_count",
+    "slow_flow_count",
 ]
 
 

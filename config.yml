@@ -23,6 +23,9 @@ icmp_flood_threshold: 50
 brute_force_ports: [22, 23, 21, 3389, 3306, 5432, 1433, 5900]
 brute_force_threshold: 5
 ttl_anomaly_threshold: 20
+slowloris_min_duration_seconds: 30
+slowloris_max_bps: 100
+slowloris_min_connections: 10
 
 whitelist:
   - "127.0.0.1"

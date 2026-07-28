@@ -130,3 +130,45 @@ def test_icmp_count_respects_window():
     tracker.update(_pkt(ts=1000.0, protocol="ICMP", dst_port=None))
     result = tracker.update(_pkt(ts=1010.0, protocol="ICMP", dst_port=None))  # 10s later, window is 5s
     assert result["icmp_count"] == 1
+
+
+def test_slow_flow_count_zero_for_single_recent_flow():
+    tracker = FlowTracker(slowloris_min_duration=30, slowloris_max_bps=100)
+    result = tracker.update(_pkt(ts=1000.0, dst_port=80))
+    assert result["slow_flow_count"] == 0  # too new to qualify as "slow"
+
+
+def test_slow_flow_count_detects_multiple_long_low_throughput_flows():
+    tracker = FlowTracker(slowloris_min_duration=30, slowloris_max_bps=100)
+
+    # Simulate 3 separate connections (different src_ports) to the same
+    # dst_ip:dst_port, each spanning >30s with very little data.
+    for port_offset in range(3):
+        src_port = 40000 + port_offset
+        tracker.update(_pkt(ts=1000.0, src_port=src_port, dst_port=80, packet_length=50))
+        result = tracker.update(_pkt(ts=1035.0, src_port=src_port, dst_port=80, packet_length=50))
+
+    # The last update's result reflects all 3 flows now qualifying as slow
+    assert result["slow_flow_count"] == 3
+
+
+def test_slow_flow_count_excludes_high_throughput_flows():
+    tracker = FlowTracker(slowloris_min_duration=30, slowloris_max_bps=100)
+
+    # A long-duration flow that transferred a LOT of data (not slow) --
+    # e.g. a legitimate large download that happens to run for a while.
+    tracker.update(_pkt(ts=1000.0, dst_port=80, packet_length=50000))
+    result = tracker.update(_pkt(ts=1035.0, dst_port=80, packet_length=50000))
+    assert result["slow_flow_count"] == 0
+
+
+def test_slow_flow_count_excludes_different_destination_ports():
+    tracker = FlowTracker(slowloris_min_duration=30, slowloris_max_bps=100)
+
+    tracker.update(_pkt(ts=1000.0, src_port=40001, dst_port=80, packet_length=50))
+    tracker.update(_pkt(ts=1035.0, src_port=40001, dst_port=80, packet_length=50))
+
+    # Different destination port -- shouldn't count toward port 443's total
+    tracker.update(_pkt(ts=1000.0, src_port=40002, dst_port=443, packet_length=50))
+    result = tracker.update(_pkt(ts=1035.0, src_port=40002, dst_port=443, packet_length=50))
+    assert result["slow_flow_count"] == 1  # only counts the port 443 flow itself

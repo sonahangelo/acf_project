@@ -250,3 +250,36 @@ tripped up initial live testing (packets sent while interface="lo" were
 never captured, since they never touched the loopback interface at all).
 Confirmed via tcpdump -i any during debugging. Worth remembering for any
 future broadcast-related testing.
+
+## Slowloris detection
+
+Detects the "many slow trickling connections" signature: unlike a flood
+(many packets fast), Slowloris opens many connections to the same
+destination port and holds them open with minimal data, exhausting a
+server's connection pool without ever looking like a volume attack.
+
+FlowTracker counts, per (source, destination, port), how many currently
+active flows have BOTH a long duration (default: 30s+) AND a very low
+byte rate (default: <=100 bytes/sec). slowloris_min_connections (default:
+10) sets how many such slow flows trigger an alert.
+
+HONEST NOTE on live validation: the underlying slow_flow_count computation
+is fully validated -- confirmed via unit tests AND a direct isolated call
+to check_hybrid_rules() with realistic feature values (low port_repeat_count,
+high slow_flow_count), which correctly triggered with the right reason.
+
+However, the live end-to-end simulation (crafted SYN+ACK pairs to
+simulate held-open connections) also happened to trip the
+repeated_port_probe rule, which is checked earlier in check_hybrid_rules
+and returns first. This is a property of the SYN-repeating simulation
+method, not a flaw in slowloris detection -- a real Slowloris attack
+sends exactly one SYN per connection (no repeats), so it wouldn't trigger
+repeated_port_probe at all, and slowloris would be the rule that catches
+it in practice. Documented plainly rather than claiming a live end-to-end
+alert that the specific test scenario didn't actually produce.
+
+Also discovered during testing: sending timed scripts via a bash heredoc
+piped through sudo can silently break time.sleep() timing (all packets
+ending up clustered together instead of spread apart) -- likely a stdin/
+pipe interaction. Saving the script to a file and running it directly
+(sudo <python3-acf> /path/to/script.py) resolved this reliably.

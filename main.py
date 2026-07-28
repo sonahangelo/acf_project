@@ -31,6 +31,8 @@ def run_learn_mode(cfg, count):
         syn_window_seconds=cfg.get("syn_window_seconds", 5),
         port_repeat_window_seconds=cfg.get("port_repeat_window_seconds", 10),
         icmp_window_seconds=cfg.get("icmp_window_seconds", 5),
+	slowloris_min_duration=cfg.get("slowloris_min_duration_seconds", 30),
+        slowloris_max_bps=cfg.get("slowloris_max_bps", 100),
     )
 
     def handle(pkt):
@@ -115,6 +117,13 @@ def check_hybrid_rules(feats, model, vector, cfg):
     if feats.get("port_repeat_count", 0) >= port_repeat_threshold:
         return True, f"repeated_port_probe (attempts={feats.get('port_repeat_count')} to dst_port={feats.get('dst_port')})"
 
+    # Slowloris: many concurrent, long-duration, low-throughput connections
+    # to the same destination port from this source -- exhausts a server's
+    # connection pool without ever looking like a volume flood.
+    slowloris_min_connections = cfg.get("slowloris_min_connections", 10)
+    if feats.get("slow_flow_count", 0) >= slowloris_min_connections:
+        return True, (f"slowloris (slow_flow_count={feats.get('slow_flow_count')} "
+                       f"to dst_port={feats.get('dst_port')})")
     # ICMP flood (ping flood).
     icmp_threshold = cfg.get("icmp_flood_threshold", 50)
     if feats.get("icmp_count", 0) >= icmp_threshold:
@@ -200,6 +209,8 @@ def run_detect_mode(cfg):
         flow_timeout_seconds=cfg.get("flow_timeout_seconds", 30),
         syn_window_seconds=cfg.get("syn_window_seconds", 5),
         port_repeat_window_seconds=cfg.get("port_repeat_window_seconds", 10),
+	slowloris_min_duration=cfg.get("slowloris_min_duration_seconds", 30),
+        slowloris_max_bps=cfg.get("slowloris_max_bps", 100),
     )
 
     def handle(pkt):

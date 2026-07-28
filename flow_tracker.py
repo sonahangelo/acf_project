@@ -17,6 +17,14 @@ Tracks several layers of state, each aimed at a different attack shape:
 4. Per-(source, destination, port) repeat-attempt tracking: count of SYNs
    to the *same* specific endpoint recently. Catches repeated probing of
    one port/service (distinct from a scan, which spreads across ports).
+
+5. Per-source-IP ICMP tracking: count of ICMP packets recently. Catches
+   ping floods.
+
+6. Slowloris: counts, per (source, destination, port), how many currently
+   active flows have both a long duration AND a very low byte rate --
+   the "many slow trickling connections" signature that exhausts a
+   server's connection pool without ever looking like a volume flood.
 """
 
 import time
@@ -26,12 +34,15 @@ from collections import defaultdict, deque
 class FlowTracker:
     def __init__(self, scan_window_seconds=5, flow_timeout_seconds=30,
                  syn_window_seconds=5, port_repeat_window_seconds=10,
-                 icmp_window_seconds=5):
+                 icmp_window_seconds=5, slowloris_min_duration=30,
+                 slowloris_max_bps=100):
         self.scan_window_seconds = scan_window_seconds
         self.flow_timeout_seconds = flow_timeout_seconds
         self.syn_window_seconds = syn_window_seconds
         self.port_repeat_window_seconds = port_repeat_window_seconds
         self.icmp_window_seconds = icmp_window_seconds
+        self.slowloris_min_duration = slowloris_min_duration
+        self.slowloris_max_bps = slowloris_max_bps
 
         self._flows = {}  # 5-tuple -> {start, last, packet_count, byte_count}
         self._scan_history = defaultdict(deque)          # src_ip -> deque of (ts, dst_port)
@@ -52,6 +63,7 @@ class FlowTracker:
     def update(self, feats):
         ts = feats["timestamp"]
         length = feats.get("packet_length", 0)
+        src_ip = feats["src_ip"]
 
         # --- per-flow (connection-level) stats ---
         key = self._flow_key(feats)
@@ -73,7 +85,6 @@ class FlowTracker:
             flow_bps = 0.0
 
         # --- per-source-IP scan tracking (DNS excluded) ---
-        src_ip = feats["src_ip"]
         is_dns = feats.get("protocol") == "UDP" and feats.get("dst_port") == 53
         scan_hist = self._scan_history[src_ip]
         if not is_dns:
@@ -108,8 +119,6 @@ class FlowTracker:
             port_hist.popleft()
         port_repeat_count = len(port_hist)
 
-        self._expire_flows(ts)
-
         # --- per-source-IP ICMP tracking (ping flood detection) ---
         icmp_count = 0
         if feats.get("protocol") == "ICMP":
@@ -119,6 +128,26 @@ class FlowTracker:
             while icmp_hist and icmp_hist[0] < icmp_cutoff:
                 icmp_hist.popleft()
             icmp_count = len(icmp_hist)
+
+        self._expire_flows(ts)
+
+        # --- Slowloris: many concurrent long-duration, low-throughput
+        # flows from this source to the same destination port. Scans the
+        # currently-tracked flows (bounded by flow_timeout expiry, so
+        # this stays small in practice) rather than keeping a separate
+        # running counter, since flows naturally come and go.
+        slow_flow_count = 0
+        dst_port_for_slow_check = feats.get("dst_port")
+        for other_key, other_flow in self._flows.items():
+            if (other_key[0] != src_ip or other_key[2] != feats["dst_ip"]
+                    or other_key[3] != dst_port_for_slow_check):
+                continue
+            other_duration = other_flow["last"] - other_flow["start"]
+            if other_duration <= 0:
+                continue
+            other_bps = other_flow["byte_count"] / other_duration
+            if other_duration >= self.slowloris_min_duration and other_bps <= self.slowloris_max_bps:
+                slow_flow_count += 1
 
         return {
             "flow_duration": round(duration, 3),
@@ -131,6 +160,7 @@ class FlowTracker:
             "syn_count": syn_count,
             "port_repeat_count": port_repeat_count,
             "icmp_count": icmp_count,
+            "slow_flow_count": slow_flow_count,
         }
 
     def _expire_flows(self, now):
