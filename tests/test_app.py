@@ -7,12 +7,43 @@ import app as app_module
 @pytest.fixture
 def client():
     app_module.app.config["TESTING"] = True
-    # Ensure database path directory exists before running test requests
     db_path = app_module.cfg.get("db_path", "data/acf.db")
     db_dir = os.path.dirname(db_path)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
-        
+
+    # Initialize the database schema and tables before running tests
+    if hasattr(app_module, "init_db"):
+        app_module.init_db()
+    else:
+        conn = sqlite3.connect(db_path)
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS traffic (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp REAL,
+                src_ip TEXT,
+                dst_ip TEXT
+            );
+            CREATE TABLE IF NOT EXISTS alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp REAL,
+                src_ip TEXT,
+                dst_ip TEXT,
+                action TEXT,
+                score REAL,
+                rule_reason TEXT,
+                top_reasons TEXT,
+                feedback TEXT
+            );
+            CREATE TABLE IF NOT EXISTS blocked_ips (
+                ip TEXT PRIMARY KEY,
+                blocked_at REAL,
+                reason TEXT,
+                dry_run INTEGER
+            );
+        """)
+        conn.close()
+
     with app_module.app.test_client() as client:
         yield client
 
@@ -39,10 +70,6 @@ def test_traffic_timeline_endpoint_returns_list(client):
 
 def test_mark_feedback_endpoint_sets_label(client):
     db_path = app_module.cfg.get("db_path", "data/acf.db")
-    db_dir = os.path.dirname(db_path)
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
-
     conn = sqlite3.connect(db_path)
     conn.execute(
         "INSERT INTO alerts (src_ip, dst_ip, action, score) VALUES (?, ?, ?, ?)",
