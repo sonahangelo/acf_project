@@ -38,16 +38,21 @@ def test_mark_feedback_endpoint_sets_label(client):
     db_dir = os.path.dirname(db_path)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
-        
+
     conn = sqlite3.connect(db_path)
-    conn.execute("INSERT INTO alerts (src_ip, dst_ip, action, score) VALUES (?, ?, ?, ?)", ("9.9.9.9", "1.1.1.1", "BLOCK", -0.1))
+    conn.execute(
+        "INSERT INTO alerts (src_ip, dst_ip, action, score) VALUES (?, ?, ?, ?)",
+        ("9.9.9.9", "1.1.1.1", "BLOCK", -0.1),
+    )
     conn.commit()
     alert_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.close()
-    
-    response = client.post(f"/api/alerts/{alert_id}/feedback", json={"label": "false_positive"})
-    assert response.status_code == 200
 
+    response = client.post(
+        f"/api/alerts/{alert_id}/feedback", json={"label": "false_positive"}
+    )
+    assert response.status_code == 200
+    
 def test_mark_feedback_rejects_invalid_label(client):
     response = client.post("/api/alerts/1/feedback", json={"label": "not_a_real_label"})
     assert response.status_code == 400
