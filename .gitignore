@@ -1,10 +1,6 @@
 acf-env/
 __pycache__/
 *.pyc
-data/*.csv
-models/*.pkl
-.pytest_cache/
 data/*.db
-data/*.db-*
-detect_output.log
-acf-env/bin/python3-acf
+data/alerts_log.csv
+.pytest_cache/

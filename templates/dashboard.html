@@ -185,6 +185,88 @@
 
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/dashboard.js"></script>
+<script src="/static/dashboard.js"></script>
+  <script>
+    // 1. SSE Listener for Live Auto-Refresh
+    const eventSource = new EventSource('/api/stream-alerts');
+
+    eventSource.onmessage = function(event) {
+        if (event.data === 'update') {
+            console.log('New threat logged! Triggering dashboard refresh...');
+            // Trigger dashboard.js built-in update if present, or fetch alerts
+            if (typeof renderAlerts === 'function') {
+                renderAlerts();
+            } else if (typeof fetchAlerts === 'function') {
+                fetchAlerts();
+            } else if (window.location.reload) {
+                // Fallback: refresh data tables cleanly
+                fetchThreatLogs();
+            }
+        }
+    };
+
+    function fetchThreatLogs() {
+        const currentUrlParams = window.location.search;
+        fetch(`/api/alerts${currentUrlParams}`)
+            .then(res => res.json())
+            .then(data => {
+                const tbody = document.getElementById('alertsBody');
+                if (!tbody) return;
+
+                if (!data || data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="empty">No alerts recorded</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = '';
+                data.forEach(alert => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${alert.timestamp || ''}</td>
+                        <td><strong style="color: #ff4d4d;">${alert.src_ip || ''}</strong></td>
+                        <td>${alert.dst_ip || ''}</td>
+                        <td>${alert.score !== null ? alert.score : '—'}</td>
+                        <td>${alert.rule_reason || alert.top_reasons || '—'}</td>
+                        <td><span class="badge">${alert.feedback || 'unlabeled'}</span></td>
+                        <td><span class="badge danger">${alert.action || 'Blocked'}</span></td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            })
+            .catch(err => console.error('Error auto-refreshing alerts:', err));
+    }
+
+    eventSource.onerror = function() {
+        console.warn('SSE connection lost, reconnecting...');
+    };
+
+    // 2. Real-time Service Health Indicator Probe
+    function checkServiceStatus() {
+        fetch('/api/status')
+            .then(res => res.json())
+            .then(data => {
+                const healthDot = document.getElementById('healthDot');
+                const modeIndicator = document.getElementById('modeIndicator');
+
+                if (healthDot) {
+                    healthDot.style.backgroundColor = data.active ? '#10b981' : '#ef4444';
+                    healthDot.title = data.active ? 'Detection Engine: ACTIVE' : 'Detection Engine: INACTIVE';
+                }
+
+                if (modeIndicator) {
+                    modeIndicator.textContent = data.active ? 'LIVE / DETECT' : 'INACTIVE';
+                    modeIndicator.style.color = data.active ? '#10b981' : '#ef4444';
+                }
+            })
+            .catch(() => {
+                const healthDot = document.getElementById('healthDot');
+                if (healthDot) healthDot.style.backgroundColor = '#f59e0b';
+            });
+    }
+
+    // Poll detection status every 3 seconds
+    checkServiceStatus();
+    setInterval(checkServiceStatus, 3000);
+  </script>
 </body>
 </html>

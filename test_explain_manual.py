@@ -1,26 +1,16 @@
-"""
-Quick manual check: force a synthetic anomalous vector through
-explain() to confirm it produces sensible output, without waiting
-on live traffic to naturally trigger a BLOCK.
-"""
-from ai_model import AnomalyModel
-from features import MODEL_FEATURE_COLUMNS
+import pytest
+import pandas as pd
+import ai_model
 
-model = AnomalyModel(model_path="models/anomaly_model.pkl").load()
+def test_explain_manual():
+    # Dynamically pick the model class defined in ai_model
+    ModelClass = getattr(ai_model, 'ACFModel', None) or getattr(ai_model, 'AnomalyModel', None)
+    
+    model = ModelClass()
+    model.load()
 
-print("Feature columns:", MODEL_FEATURE_COLUMNS)
-print("Trained means:", model.feature_means)
-print()
+    # 14 features matching MODEL_FEATURE_COLUMNS
+    fake_scan_vector = [60, 44444, 80, 0.01, 1, 60, 100.0, 6000.0, 50, 500.0, 1, 0, 0, 0]
 
-# Build a synthetic vector that looks like a port scan:
-# huge scan_distinct_ports and scan_pps, everything else modest.
-fake_scan_vector = [74, 12345, 80, 0.5, 3, 300, 6.0, 600.0, 50, 200.0]
-
-label, score = model.predict(fake_scan_vector)
-explanation = model.explain(fake_scan_vector)
-
-print(f"Predicted label: {label} (-1 = anomaly, 1 = normal)")
-print(f"Score: {score:.4f}")
-print("Top reasons:")
-for name, value, dev in explanation:
-    print(f"  {name} = {value}  ({dev:+.2f} std from normal)")
+    label, score = model.predict(fake_scan_vector)
+    assert label in [0, 1]

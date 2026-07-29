@@ -1,8 +1,8 @@
-interface: ""
-bpf_filter: "arp or ip"
+interface: "lo"
+bpf_filter: ""
 flush_every: 20
 contamination: 0.02
-dry_run: true
+dry_run: false
 
 scan_window_seconds: 5
 flow_timeout_seconds: 30

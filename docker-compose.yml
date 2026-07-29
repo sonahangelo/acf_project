@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  acf-engine:
+    build: .
+    network_mode: "host"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./data:/app/data
+      - ./config.yml:/app/config.yml
+    restart: unless-stopped
+
+  acf-dashboard:
+    build: .
+    command: python3 app.py
+    network_mode: "host"
+    restart: unless-stopped

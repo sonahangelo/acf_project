@@ -1,10 +1,5 @@
 """
 app.py -- ACF Dashboard (web UI)
-
-A local Flask app serving a live-updating dashboard over ACF's SQLite
-database. Mostly read-only, with write paths for: marking alert feedback,
-and unblocking IPs (both feed back into the same underlying systems as
-feedback.py / blocklist.py CLI tools).
 """
 
 import os
@@ -12,12 +7,26 @@ import sqlite3
 import subprocess
 import time
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, g
+from flask_httpauth import HTTPBasicAuth
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from utils import load_config
 from firewall import unblock_ip
 
 app = Flask(__name__)
+auth = HTTPBasicAuth()
+
+# Basic Auth User Setup
+USERS = {
+    "admin": generate_password_hash("acfpassword123")
+}
+
+@auth.verify_password
+def verify_password(username, password):
+    if username in USERS and check_password_hash(USERS.get(username), password):
+        return username
+
 cfg = load_config("config.yml")
 _dashboard_start_time = time.time()
 
@@ -61,11 +70,13 @@ def check_service_status(service_name):
 
 
 @app.route("/")
+@auth.login_required
 def index():
     return render_template("dashboard.html")
 
 
 @app.route("/api/summary")
+@auth.login_required
 def api_summary():
     conn = get_db()
     traffic_count = conn.execute("SELECT COUNT(*) FROM traffic").fetchone()[0]
@@ -90,6 +101,7 @@ def api_summary():
 
 
 @app.route("/api/health")
+@auth.login_required
 def api_health():
     conn = get_db()
     last_capture_ts = conn.execute("SELECT MAX(timestamp) FROM traffic").fetchone()[0]
@@ -116,6 +128,7 @@ def api_health():
 
 
 @app.route("/api/alerts/<int:alert_id>/feedback", methods=["POST"])
+@auth.login_required
 def api_mark_feedback(alert_id):
     data = request.get_json(silent=True) or {}
     label = data.get("label")
@@ -137,6 +150,7 @@ def api_mark_feedback(alert_id):
 
 
 @app.route("/api/alerts")
+@auth.login_required
 def api_alerts():
     search = request.args.get("q", "").strip()
     reason_filter = request.args.get("reason", "").strip()
@@ -171,7 +185,60 @@ def api_alerts():
     return jsonify(rows)
 
 
+@app.route("/api/stream-alerts")
+@auth.login_required
+def stream_alerts():
+    def event_stream():
+        last_seen_id = 0
+        try:
+            conn = get_db()
+            row = conn.execute("SELECT MAX(id) as max_id FROM alerts").fetchone()
+            if row and row["max_id"]:
+                last_seen_id = row["max_id"]
+            conn.close()
+        except Exception:
+            pass
+
+        while True:
+            try:
+                conn = get_db()
+                row = conn.execute("SELECT MAX(id) as max_id FROM alerts").fetchone()
+                conn.close()
+
+                current_max = row["max_id"] if (row and row["max_id"]) else 0
+
+                if current_max > last_seen_id:
+                    last_seen_id = current_max
+                    yield "data: update\n\n"
+            except Exception:
+                pass
+
+            time.sleep(1.5)
+
+    return Response(event_stream(), mimetype="text/event-stream")
+
+
+@app.route("/api/status")
+@auth.login_required
+def api_status():
+    detection_active = False
+    try:
+        output = subprocess.check_output(["ps", "aux"]).decode("utf-8")
+        for line in output.splitlines():
+            if "main.py" in line and "--mode detect" in line and "grep" not in line:
+                detection_active = True
+                break
+    except Exception:
+        detection_active = False
+
+    return jsonify({
+        "status": "Active" if detection_active else "Inactive",
+        "active": detection_active
+    })
+
+
 @app.route("/api/alert-breakdown")
+@auth.login_required
 def api_alert_breakdown():
     conn = get_db()
     rows = conn.execute("SELECT rule_reason FROM alerts").fetchall()
@@ -187,6 +254,7 @@ def api_alert_breakdown():
 
 
 @app.route("/api/blocklist")
+@auth.login_required
 def api_blocklist():
     conn = get_db()
     rows = conn.execute(
@@ -197,6 +265,7 @@ def api_blocklist():
 
 
 @app.route("/api/blocklist/<ip>/unblock", methods=["POST"])
+@auth.login_required
 def api_unblock(ip):
     conn = get_db()
     exists = conn.execute("SELECT ip FROM blocked_ips WHERE ip = ?", (ip,)).fetchone()
@@ -218,6 +287,7 @@ TIMELINE_RANGES = {
 
 
 @app.route("/api/traffic-timeline")
+@auth.login_required
 def api_traffic_timeline():
     range_key = request.args.get("range", "30m")
     window_seconds, bucket_seconds = TIMELINE_RANGES.get(range_key, TIMELINE_RANGES["30m"])
@@ -235,6 +305,7 @@ def api_traffic_timeline():
 
 
 @app.route("/api/top-offenders")
+@auth.login_required
 def api_top_offenders():
     limit = min(int(request.args.get("limit", 10)), 50)
     conn = get_db()

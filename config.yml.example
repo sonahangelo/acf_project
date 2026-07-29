@@ -1,0 +1,35 @@
+# Adaptive Cognitive Firewall (ACF) Configuration Template
+
+network:
+  interface: "lo"            # Default interface: "lo", "eth0", "wlan0"
+  bpf_filter: ""             # Leave empty to capture all packets (including spoofed traffic)
+
+firewall:
+  dry_run: true              # Set to false for active iptables blocking
+  block_duration_seconds: 3600
+
+detection:
+  syn_flood_threshold: 30    # Packets per second
+  scan_threshold: 15
+
+whitelist:
+  - "127.0.0.1"
+  - "::1"
+EOFcat << 'EOF' > config.yml.example
+# Adaptive Cognitive Firewall (ACF) Configuration Template
+
+network:
+  interface: "lo"            # Default interface: "lo", "eth0", "wlan0"
+  bpf_filter: ""             # Leave empty to capture all packets (including spoofed traffic)
+
+firewall:
+  dry_run: true              # Set to false for active iptables blocking
+  block_duration_seconds: 3600
+
+detection:
+  syn_flood_threshold: 30    # Packets per second
+  scan_threshold: 15
+
+whitelist:
+  - "127.0.0.1"
+  - "::1"
