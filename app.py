@@ -115,9 +115,10 @@ def api_health():
     if os.path.exists(model_path):
         model_last_trained = os.path.getmtime(model_path)
 
+    db_path = cfg.get("db_path", "data/acf.db")  # Safely fetch db_path
     db_size_bytes = 0
-    if os.path.exists(cfg["db_path"]):
-        db_size_bytes = os.path.getsize(cfg["db_path"])
+    if os.path.exists(db_path):
+        db_size_bytes = os.path.getsize(db_path)
 
     return jsonify({
         "detect_service_status": check_service_status("acf-detect.service"),
