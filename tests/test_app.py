@@ -32,6 +32,7 @@ def test_blocklist_endpoint_returns_list(client):
 def test_traffic_timeline_endpoint_returns_list(client):
     response = client.get("/api/traffic-timeline")
     assert response.status_code == 200
+conn = sqlite3.connect(app_module.cfg["db_path"])
 
 def test_mark_feedback_endpoint_sets_label(client):
     db_path = app_module.cfg.get("db_path", "data/acf.db")
@@ -42,15 +43,13 @@ def test_mark_feedback_endpoint_sets_label(client):
     conn = sqlite3.connect(db_path)
     conn.execute(
         "INSERT INTO alerts (src_ip, dst_ip, action, score) VALUES (?, ?, ?, ?)",
-        ("9.9.9.9", "1.1.1.1", "BLOCK", -0.1),
+        ("9.9.9.9", "1.1.1.1", "BLOCK", -0.1)
     )
     conn.commit()
     alert_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.close()
 
-    response = client.post(
-        f"/api/alerts/{alert_id}/feedback", json={"label": "false_positive"}
-    )
+    response = client.post(f"/api/alerts/{alert_id}/feedback", json={"label": "false_positive"})
     assert response.status_code == 200
     
 def test_mark_feedback_rejects_invalid_label(client):
