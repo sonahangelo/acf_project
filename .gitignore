@@ -4,3 +4,5 @@ __pycache__/
 data/*.db
 data/alerts_log.csv
 .pytest_cache/
+data/*.db-shm
+data/*.db-wal
