@@ -51,7 +51,7 @@ def get_db():
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
-
+    
 def categorize(rule_reason):
     if not rule_reason:
         return "ml_anomaly"
@@ -103,6 +103,16 @@ def api_summary():
     })
 
 
+def get_db():
+    db_path = cfg.get("db_path", "data/acf.db")
+    db_dir = os.path.dirname(db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 @app.route("/api/health")
 @auth.login_required
 def api_health():
@@ -115,7 +125,7 @@ def api_health():
     if os.path.exists(model_path):
         model_last_trained = os.path.getmtime(model_path)
 
-    db_path = cfg.get("db_path", "data/acf.db")  # Safely fetch db_path
+    db_path = cfg.get("db_path", "data/acf.db")
     db_size_bytes = 0
     if os.path.exists(db_path):
         db_size_bytes = os.path.getsize(db_path)
@@ -129,7 +139,6 @@ def api_health():
         "db_size_bytes": db_size_bytes,
         "server_time": time.time(),
     })
-
 
 @app.route("/api/alerts/<int:alert_id>/feedback", methods=["POST"])
 @auth.login_required
