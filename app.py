@@ -44,10 +44,13 @@ REASON_CATEGORIES = {
 
 
 def get_db():
-    conn = sqlite3.connect(cfg["db_path"])
+    db_path = cfg.get("db_path", "data/acf.db")
+    db_dir = os.path.dirname(db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+    conn = sqlite3.connect(db_path)  # Use db_path here
     conn.row_factory = sqlite3.Row
     return conn
-
 
 def categorize(rule_reason):
     if not rule_reason:
