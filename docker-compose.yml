@@ -1,5 +1,4 @@
 version: '3.8'
-
 services:
   acf-engine:
     build: .
@@ -9,11 +8,17 @@ services:
       - NET_RAW
     volumes:
       - ./data:/app/data
+      - ./models:/app/models
       - ./config.yml:/app/config.yml
     restart: unless-stopped
+    entrypoint: ["/app/docker-entrypoint.sh"]
 
   acf-dashboard:
     build: .
     command: python3 app.py
     network_mode: "host"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./config.yml:/app/config.yml
     restart: unless-stopped
