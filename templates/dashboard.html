@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="acf-csrf-token" content="{{ csrf_token }}">
 <title>ACF — Adaptive Cognitive Firewall</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -119,6 +120,11 @@
             <option value="icmp_flood">ICMP flood</option>
             <option value="brute_force">Brute force</option>
             <option value="invalid_flags">Invalid flags</option>
+            <option value="ttl_anomaly">TTL anomaly</option>
+            <option value="slowloris">Slowloris</option>
+            <option value="smurf_attack">Smurf attack</option>
+            <option value="rogue_dhcp">Rogue DHCP</option>
+            <option value="threat_intel">Threat intel</option>
             <option value="ml_anomaly">ML anomaly</option>
           </select>
           <select id="feedbackFilter" class="filter-select">

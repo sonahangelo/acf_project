@@ -8,6 +8,7 @@ already known to be blocked.
 
 import subprocess
 import time
+from ipaddress import ip_address
 
 
 def load_blocked_ips(conn):
@@ -16,7 +17,15 @@ def load_blocked_ips(conn):
     return {row[0] for row in rows}
 
 
+def _normalize_ip(ip):
+    try:
+        return str(ip_address(ip))
+    except ValueError as exc:
+        raise ValueError(f"invalid IP address: {ip!r}") from exc
+
+
 def block_ip(conn, ip, dry_run=True, reason=""):
+    ip = _normalize_ip(ip)
     already = conn.execute("SELECT 1 FROM blocked_ips WHERE ip = ?", (ip,)).fetchone()
     if already:
         return  # already recorded as blocked, avoid duplicate rules
@@ -38,6 +47,7 @@ def block_ip(conn, ip, dry_run=True, reason=""):
 
 
 def unblock_ip(conn, ip, dry_run=True):
+    ip = _normalize_ip(ip)
     if not dry_run:
         cmd = ["sudo", "iptables", "-D", "INPUT", "-s", ip, "-j", "DROP"]
         result = subprocess.run(cmd, capture_output=True, text=True)

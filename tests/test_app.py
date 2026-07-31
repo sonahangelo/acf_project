@@ -4,6 +4,13 @@ import pytest
 import app as app_module
 
 
+def auth_headers():
+    return {
+        "Authorization": "Basic YWRtaW46YWNmcGFzc3dvcmQxMjM=",
+        "X-ACF-CSRF-Token": app_module.CSRF_TOKEN,
+    }
+
+
 @pytest.fixture
 def client():
     app_module.app.config["TESTING"] = True
@@ -49,22 +56,22 @@ def client():
 
 
 def test_summary_endpoint_returns_json(client):
-    response = client.get("/api/summary", headers={"Authorization": "Basic YWRtaW46YWNmcGFzc3dvcmQxMjM="})
+    response = client.get("/api/summary", headers=auth_headers())
     assert response.status_code == 200
 
 
 def test_alerts_endpoint_returns_list(client):
-    response = client.get("/api/alerts", headers={"Authorization": "Basic YWRtaW46YWNmcGFzc3dvcmQxMjM="})
+    response = client.get("/api/alerts", headers=auth_headers())
     assert response.status_code == 200
 
 
 def test_blocklist_endpoint_returns_list(client):
-    response = client.get("/api/blocklist", headers={"Authorization": "Basic YWRtaW46YWNmcGFzc3dvcmQxMjM="})
+    response = client.get("/api/blocklist", headers=auth_headers())
     assert response.status_code == 200
 
 
 def test_traffic_timeline_endpoint_returns_list(client):
-    response = client.get("/api/traffic-timeline", headers={"Authorization": "Basic YWRtaW46YWNmcGFzc3dvcmQxMjM="})
+    response = client.get("/api/traffic-timeline", headers=auth_headers())
     assert response.status_code == 200
 
 
@@ -82,7 +89,7 @@ def test_mark_feedback_endpoint_sets_label(client):
     response = client.post(
         f"/api/alerts/{alert_id}/feedback",
         json={"label": "false_positive"},
-        headers={"Authorization": "Basic YWRtaW46YWNmcGFzc3dvcmQxMjM="},
+        headers=auth_headers(),
     )
     assert response.status_code == 200
 
@@ -91,6 +98,28 @@ def test_mark_feedback_on_nonexistent_alert_returns_404(client):
     response = client.post(
         "/api/alerts/9999/feedback",
         json={"label": "false_positive"},
-        headers={"Authorization": "Basic YWRtaW46YWNmcGFzc3dvcmQxMjM="},
+        headers=auth_headers(),
     )
     assert response.status_code == 404
+
+
+def test_alerts_rejects_invalid_limit(client):
+    response = client.get("/api/alerts?limit=abc", headers=auth_headers())
+    assert response.status_code == 400
+
+
+def test_feedback_requires_csrf_token(client):
+    response = client.post(
+        "/api/alerts/1/feedback",
+        json={"label": "false_positive"},
+        headers={"Authorization": "Basic YWRtaW46YWNmcGFzc3dvcmQxMjM="},
+    )
+    assert response.status_code == 403
+
+
+def test_unblock_rejects_invalid_ip(client):
+    response = client.post(
+        "/api/blocklist/not-an-ip/unblock",
+        headers=auth_headers(),
+    )
+    assert response.status_code == 400

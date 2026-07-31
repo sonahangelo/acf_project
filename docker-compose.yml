@@ -11,11 +11,12 @@ services:
       - ./models:/app/models
       - ./config.yml:/app/config.yml
     restart: unless-stopped
-    entrypoint: ["/app/docker-entrypoint.sh"]
-
   acf-dashboard:
     build: .
     command: python3 app.py
+    environment:
+      # Required for public deployments. Replace before running docker compose.
+      ACF_DASHBOARD_PASSWORD: ${ACF_DASHBOARD_PASSWORD:?set ACF_DASHBOARD_PASSWORD}
     network_mode: "host"
     volumes:
       - ./data:/app/data

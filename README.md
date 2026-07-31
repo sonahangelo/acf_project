@@ -1,3 +1,32 @@
+## Security-first deployment checklist
+
+Before exposing the dashboard or enabling live blocking:
+
+1. Set a real dashboard password. ACF now refuses dashboard requests that rely on the demo password unless you explicitly opt in for local labs.
+
+```bash
+export ACF_DASHBOARD_PASSWORD='replace-with-a-long-random-password'
+# Local classroom/demo only:
+# export ACF_ALLOW_DEFAULT_PASSWORD=true
+```
+
+2. Keep `dry_run: true` until you have reviewed alerts in your own network. Set `dry_run: false` only when you are ready for ACF to call `iptables`.
+
+3. Treat `models/anomaly_model.pkl` as trusted code because joblib uses Python pickle internally. For production, pin the trained model in `config.yml` with `model_sha256`.
+
+```bash
+sha256sum models/anomaly_model.pkl
+```
+
+4. Add local source-IP threat-intelligence indicators to `data/threat_intel.txt`, one IP address or CIDR network per line. Keep comments with `#`.
+
+```text
+203.0.113.10
+198.51.100.0/24
+```
+
+5. For Docker deployments, provide `ACF_DASHBOARD_PASSWORD` in the environment before running `docker compose up`. The compose file intentionally fails closed if it is missing.
+
 ## Setup: avoiding sudo for capture
 
 Packet capture requires raw socket access. Rather than granting this to the

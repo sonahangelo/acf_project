@@ -11,6 +11,7 @@ Also stores per-feature mean/std from training so we can explain *why*
 a given packet looked anomalous (simple deviation-from-normal heuristic).
 """
 
+import hashlib
 import os
 import joblib
 import pandas as pd
@@ -21,9 +22,10 @@ from features import MODEL_FEATURE_COLUMNS
 
 
 class AnomalyModel:
-    def __init__(self, contamination=0.02, model_path="models/anomaly_model.pkl"):
+    def __init__(self, contamination=0.02, model_path="models/anomaly_model.pkl", expected_sha256=None):
         self.contamination = contamination
         self.model_path = model_path
+        self.expected_sha256 = expected_sha256
         self.model = None
         self.scaler = None
         self.feature_means = {}
@@ -78,11 +80,25 @@ class AnomalyModel:
             "feature_stds": self.feature_stds,
         }, self.model_path)
 
+    def _verify_model_hash(self):
+        if not self.expected_sha256:
+            return
+        digest = hashlib.sha256()
+        with open(self.model_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                digest.update(chunk)
+        actual = digest.hexdigest()
+        if actual.lower() != self.expected_sha256.lower():
+            raise ValueError(
+                f"Model hash mismatch for {self.model_path}: expected {self.expected_sha256}, got {actual}"
+            )
+
     def load(self):
         if not os.path.exists(self.model_path):
             raise FileNotFoundError(
                 f"No trained model at {self.model_path}. Run: python ai_model.py --train"
             )
+        self._verify_model_hash()
         bundle = joblib.load(self.model_path)
         self.model = bundle["model"]
         self.scaler = bundle["scaler"]

@@ -1,0 +1,5 @@
+# ACF local threat-intelligence indicators
+# One IP address or CIDR network per line. Lines can include # comments.
+# Example entries:
+# 203.0.113.10
+# 198.51.100.0/24

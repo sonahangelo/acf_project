@@ -3,12 +3,15 @@ app.py -- ACF Dashboard (web UI)
 """
 
 import os
+import secrets
 import sqlite3
 import subprocess
 import time
+from ipaddress import ip_address
 
-from flask import Flask, Response, jsonify, render_template, request, g
+from flask import Flask, Response, jsonify, render_template, request
 from flask_httpauth import HTTPBasicAuth
+from werkzeug.exceptions import BadRequest
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from utils import load_config
@@ -17,10 +20,25 @@ from firewall import unblock_ip
 app = Flask(__name__)
 auth = HTTPBasicAuth()
 
-# Basic Auth User Setup
-USERS = {
-    "admin": generate_password_hash("acfpassword123")
-}
+DEFAULT_DASHBOARD_PASSWORD = "acfpassword123"
+DASHBOARD_USER = os.environ.get("ACF_DASHBOARD_USER", "admin")
+DASHBOARD_PASSWORD = os.environ.get("ACF_DASHBOARD_PASSWORD")
+DASHBOARD_PASSWORD_HASH = os.environ.get("ACF_DASHBOARD_PASSWORD_HASH")
+ALLOW_DEFAULT_PASSWORD = os.environ.get("ACF_ALLOW_DEFAULT_PASSWORD", "").lower() in ("1", "true", "yes")
+CSRF_TOKEN = os.environ.get("ACF_CSRF_TOKEN") or secrets.token_urlsafe(32)
+
+if DASHBOARD_PASSWORD_HASH:
+    _dashboard_password_hash = DASHBOARD_PASSWORD_HASH
+elif DASHBOARD_PASSWORD:
+    _dashboard_password_hash = generate_password_hash(DASHBOARD_PASSWORD)
+else:
+    _dashboard_password_hash = generate_password_hash(DEFAULT_DASHBOARD_PASSWORD)
+
+USERS = {DASHBOARD_USER: _dashboard_password_hash}
+
+
+def using_insecure_default_password():
+    return not (DASHBOARD_PASSWORD or DASHBOARD_PASSWORD_HASH or ALLOW_DEFAULT_PASSWORD)
 
 @auth.verify_password
 def verify_password(username, password):
@@ -40,6 +58,12 @@ REASON_CATEGORIES = {
     "stealth_scan": "stealth_scan",
     "icmp_flood": "icmp_flood",
     "brute_force": "brute_force",
+    "invalid_flags": "invalid_flags",
+    "ttl_anomaly": "ttl_anomaly",
+    "slowloris": "slowloris",
+    "smurf_attack": "smurf_attack",
+    "rogue_dhcp": "rogue_dhcp",
+    "threat_intel": "threat_intel",
 }
 
 
@@ -61,6 +85,37 @@ def categorize(rule_reason):
     return "ml_anomaly"
 
 
+@app.before_request
+def enforce_dashboard_security():
+    if using_insecure_default_password() and not app.config.get("TESTING"):
+        return jsonify({
+            "error": "dashboard credentials are not configured",
+            "details": "Set ACF_DASHBOARD_PASSWORD or ACF_DASHBOARD_PASSWORD_HASH before exposing ACF.",
+        }), 503
+
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        token = request.headers.get("X-ACF-CSRF-Token")
+        if not secrets.compare_digest(token or "", CSRF_TOKEN):
+            return jsonify({"error": "missing or invalid CSRF token"}), 403
+
+
+def parse_int_arg(name, default, minimum, maximum):
+    raw = request.args.get(name, str(default))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise BadRequest(f"{name} must be an integer")
+    if value < minimum or value > maximum:
+        raise BadRequest(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
+
+@app.errorhandler(BadRequest)
+def handle_bad_request(error):
+    return jsonify({"error": error.description}), 400
+
+
 def check_service_status(service_name):
     try:
         result = subprocess.run(
@@ -75,7 +130,7 @@ def check_service_status(service_name):
 @app.route("/")
 @auth.login_required
 def index():
-    return render_template("dashboard.html")
+    return render_template("dashboard.html", csrf_token=CSRF_TOKEN)
 
 
 @app.route("/api/summary")
@@ -168,7 +223,7 @@ def api_alerts():
     search = request.args.get("q", "").strip()
     reason_filter = request.args.get("reason", "").strip()
     feedback_filter = request.args.get("feedback", "").strip()
-    limit = min(int(request.args.get("limit", 50)), 500)
+    limit = parse_int_arg("limit", 50, 1, 500)
 
     query = ("SELECT id, timestamp, src_ip, dst_ip, action, score, rule_reason, "
               "top_reasons, feedback FROM alerts WHERE 1=1")
@@ -280,15 +335,20 @@ def api_blocklist():
 @app.route("/api/blocklist/<ip>/unblock", methods=["POST"])
 @auth.login_required
 def api_unblock(ip):
+    try:
+        normalized_ip = str(ip_address(ip))
+    except ValueError:
+        return jsonify({"error": f"{ip} is not a valid IP address"}), 400
+
     conn = get_db()
-    exists = conn.execute("SELECT ip FROM blocked_ips WHERE ip = ?", (ip,)).fetchone()
+    exists = conn.execute("SELECT ip FROM blocked_ips WHERE ip = ?", (normalized_ip,)).fetchone()
     if not exists:
         conn.close()
-        return jsonify({"error": f"{ip} is not currently blocked"}), 404
+        return jsonify({"error": f"{normalized_ip} is not currently blocked"}), 404
 
-    unblock_ip(conn, ip, dry_run=cfg.get("dry_run", True))
+    unblock_ip(conn, normalized_ip, dry_run=cfg.get("dry_run", True))
     conn.close()
-    return jsonify({"ip": ip, "unblocked": True})
+    return jsonify({"ip": normalized_ip, "unblocked": True})
 
 
 TIMELINE_RANGES = {
@@ -320,7 +380,7 @@ def api_traffic_timeline():
 @app.route("/api/top-offenders")
 @auth.login_required
 def api_top_offenders():
-    limit = min(int(request.args.get("limit", 10)), 50)
+    limit = parse_int_arg("limit", 10, 1, 50)
     conn = get_db()
     rows = conn.execute(
         """

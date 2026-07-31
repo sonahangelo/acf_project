@@ -40,3 +40,13 @@ def test_load_blocked_ips_reflects_persisted_state(conn):
     block_ip(conn, "5.6.7.8", dry_run=True, reason="syn_flood test")
     reloaded = load_blocked_ips(conn)
     assert reloaded == {"5.6.7.8"}
+
+
+def test_block_ip_rejects_invalid_ip(conn):
+    with pytest.raises(ValueError):
+        block_ip(conn, "not-an-ip", dry_run=True)
+
+
+def test_unblock_ip_rejects_invalid_ip(conn):
+    with pytest.raises(ValueError):
+        unblock_ip(conn, "1.2.3.4;rm -rf /", dry_run=True)

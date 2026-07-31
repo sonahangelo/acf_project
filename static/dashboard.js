@@ -11,6 +11,10 @@ const CATEGORY_COLORS = {
   brute_force: "#f43f5e",
   invalid_flags: "#fb923c",
   ttl_anomaly: "#a3e635",
+  slowloris: "#14b8a6",
+  smurf_attack: "#f59e0b",
+  rogue_dhcp: "#c084fc",
+  threat_intel: "#dc2626",
   ml_anomaly: "#64748b",
 };
 const CATEGORY_LABELS = {
@@ -25,6 +29,10 @@ const CATEGORY_LABELS = {
   brute_force: "Brute force",
   invalid_flags: "Invalid flags",
   ttl_anomaly: "TTL anomaly",
+  slowloris: "Slowloris",
+  smurf_attack: "Smurf attack",
+  rogue_dhcp: "Rogue DHCP",
+  threat_intel: "Threat intel",
   ml_anomaly: "ML anomaly",
 };
 const CATEGORY_DESCRIPTIONS = {
@@ -39,6 +47,10 @@ const CATEGORY_DESCRIPTIONS = {
   brute_force: "Rapid repeated connection attempts to a known authentication port (SSH, RDP, etc.) -- likely a password-guessing attempt.",
   invalid_flags: "TCP packets with logically contradictory flags (e.g. SYN+FIN) that only crafted/evasive tools produce.",
   ttl_anomaly: "The same source IP suddenly showing a very different TTL -- a strong signal of IP spoofing.",
+  slowloris: "Many long-lived, low-throughput connections intended to exhaust a web server's connection pool.",
+  smurf_attack: "ICMP echo traffic sent to a broadcast address, a classic amplification pattern.",
+  rogue_dhcp: "A new DHCP server appeared on the network and may be trying to intercept clients.",
+  threat_intel: "Source IP matched a configured threat-intelligence IP or CIDR indicator.",
   ml_anomaly: "Flagged by the general anomaly model as statistically unusual, without matching a specific known attack pattern.",
 };
 
@@ -50,6 +62,21 @@ let soundEnabled = true;
 let audioCtx = null;
 let currentRange = "30m";
 const RANGE_LABELS = { "30m": "last 30 min", "1h": "last hour", "6h": "last 6 hours", "24h": "last 24 hours" };
+
+function csrfHeaders(extra = {}) {
+  const token = document.querySelector('meta[name="acf-csrf-token"]')?.content || "";
+  return { ...extra, "X-ACF-CSRF-Token": token };
+}
+
+function escapeHTML(value) {
+  return String(value ?? "").replace(/[&<>"']/g, ch => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  }[ch]));
+}
 
 async function fetchJSON(url, options) {
   const res = await fetch(url, options);
@@ -187,7 +214,7 @@ async function markFeedback(alertId, label) {
   try {
     const res = await fetch(`/api/alerts/${alertId}/feedback`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: csrfHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ label }),
     });
     if (!res.ok) {
@@ -206,7 +233,7 @@ async function markFeedback(alertId, label) {
 
 async function unblockIp(ip) {
   try {
-    const res = await fetch(`/api/blocklist/${ip}/unblock`, { method: "POST" });
+    const res = await fetch(`/api/blocklist/${encodeURIComponent(ip)}/unblock`, { method: "POST", headers: csrfHeaders() });
     if (!res.ok) {
       const err = await res.json();
       showToast(`Failed: ${err.error || res.statusText}`, "error");

@@ -15,6 +15,7 @@ from flow_tracker import FlowTracker
 from ttl_monitor import TtlTracker
 from dhcp_monitor import DhcpServerTracker
 from arp_monitor import ArpBindingTracker
+from threat_intel import ThreatIntel
 from ai_model import AnomalyModel
 from decision import decide
 from firewall import block_ip, load_blocked_ips
@@ -210,7 +211,11 @@ def run_detect_mode(cfg):
     conn = get_connection(cfg["db_path"])
     init_db(conn)
 
-    model = AnomalyModel(contamination=cfg["contamination"], model_path=cfg["model_path"]).load()
+    model = AnomalyModel(
+        contamination=cfg["contamination"],
+        model_path=cfg["model_path"],
+        expected_sha256=cfg.get("model_sha256"),
+    ).load()
     whitelist = set(cfg.get("whitelist", []) or [])
     dry_run = cfg.get("dry_run", True)
     already_alerted = load_blocked_ips(conn)  # don't re-alert on IPs already blocked from a prior run
@@ -220,6 +225,7 @@ def run_detect_mode(cfg):
     dns_tracker = DnsTunnelTracker(window_seconds=cfg.get("dns_window_seconds", 10))
     ttl_tracker = TtlTracker()
     dhcp_tracker = DhcpServerTracker()
+    threat_intel = ThreatIntel.from_config(cfg)
     tracker = FlowTracker(
         scan_window_seconds=cfg.get("scan_window_seconds", 5),
         flow_timeout_seconds=cfg.get("flow_timeout_seconds", 30),
@@ -271,6 +277,11 @@ def run_detect_mode(cfg):
             if dhcp_triggered:
                 rule_triggered = True
                 rule_reason = dhcp_reason if not rule_reason else f"{rule_reason}; {dhcp_reason}"
+
+            intel_triggered, intel_reason = threat_intel.check_flow(feats)
+            if intel_triggered:
+                rule_triggered = True
+                rule_reason = intel_reason if not rule_reason else f"{rule_reason}; {intel_reason}"
 
             effective_label = -1 if rule_triggered else label
 

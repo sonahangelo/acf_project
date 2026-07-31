@@ -1,35 +1,44 @@
 # Adaptive Cognitive Firewall (ACF) Configuration Template
+# Copy to config.yml and review every setting before enabling live blocking.
 
-network:
-  interface: "lo"            # Default interface: "lo", "eth0", "wlan0"
-  bpf_filter: ""             # Leave empty to capture all packets (including spoofed traffic)
+interface: "lo"
+bpf_filter: ""
+flush_every: 20
+contamination: 0.02
+dry_run: true
 
-firewall:
-  dry_run: true              # Set to false for active iptables blocking
-  block_duration_seconds: 3600
-
-detection:
-  syn_flood_threshold: 30    # Packets per second
-  scan_threshold: 15
+scan_window_seconds: 5
+flow_timeout_seconds: 30
+syn_window_seconds: 5
+syn_flood_threshold: 20
+port_repeat_window_seconds: 10
+port_repeat_threshold: 8
+exfil_bytes_threshold: 5000000
+exfil_min_duration_seconds: 5
+scan_zscore_threshold: 3.0
+scan_min_distinct_ports: 5
+dns_window_seconds: 10
+dns_min_distinct_subdomains: 15
+dns_entropy_threshold: 3.5
+dns_min_label_length: 20
+icmp_window_seconds: 5
+icmp_flood_threshold: 50
+brute_force_ports: [22, 23, 21, 3389, 3306, 5432, 1433, 5900]
+brute_force_threshold: 5
+ttl_anomaly_threshold: 20
+slowloris_min_duration_seconds: 30
+slowloris_max_bps: 100
+slowloris_min_connections: 10
 
 whitelist:
   - "127.0.0.1"
   - "::1"
-EOFcat << 'EOF' > config.yml.example
-# Adaptive Cognitive Firewall (ACF) Configuration Template
 
-network:
-  interface: "lo"            # Default interface: "lo", "eth0", "wlan0"
-  bpf_filter: ""             # Leave empty to capture all packets (including spoofed traffic)
+threat_intel_files:
+  - "data/threat_intel.txt"
+threat_intel_indicators: []
 
-firewall:
-  dry_run: true              # Set to false for active iptables blocking
-  block_duration_seconds: 3600
-
-detection:
-  syn_flood_threshold: 30    # Packets per second
-  scan_threshold: 15
-
-whitelist:
-  - "127.0.0.1"
-  - "::1"
+db_path: "data/acf.db"
+model_path: "models/anomaly_model.pkl"
+# Optional production hardening: set this to the SHA-256 of the trusted model file.
+# model_sha256: ""

@@ -21,7 +21,15 @@ OPTIONAL_NUMERIC_KEYS = [
     "port_repeat_window_seconds", "port_repeat_threshold",
     "exfil_bytes_threshold", "exfil_min_duration_seconds",
     "scan_zscore_threshold", "scan_min_distinct_ports",
+    "dns_window_seconds", "dns_min_distinct_subdomains",
+    "dns_entropy_threshold", "dns_min_label_length",
+    "icmp_window_seconds", "icmp_flood_threshold",
+    "brute_force_threshold", "ttl_anomaly_threshold",
+    "slowloris_min_duration_seconds", "slowloris_max_bps",
+    "slowloris_min_connections",
 ]
+
+OPTIONAL_LIST_KEYS = ["brute_force_ports", "threat_intel_files", "threat_intel_indicators"]
 
 
 def load_config(path="config.yml"):
@@ -64,6 +72,15 @@ def validate_config(cfg, path="config.yml"):
         for i, entry in enumerate(cfg["whitelist"]):
             if not isinstance(entry, str):
                 errors.append(f"whitelist[{i}] should be a string IP, got {type(entry).__name__} ({entry!r})")
+
+    for key in OPTIONAL_LIST_KEYS:
+        if key in cfg and not isinstance(cfg[key], list):
+            errors.append(f"'{key}' should be a list, got {type(cfg[key]).__name__} ({cfg[key]!r})")
+
+    if "model_sha256" in cfg and cfg["model_sha256"]:
+        digest = str(cfg["model_sha256"])
+        if len(digest) != 64 or any(c not in "0123456789abcdefABCDEF" for c in digest):
+            errors.append("'model_sha256' should be a 64-character SHA-256 hex digest")
 
     for key in OPTIONAL_NUMERIC_KEYS:
         if key in cfg and not isinstance(cfg[key], (int, float)):
