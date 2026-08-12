@@ -71,7 +71,7 @@ function severityTag(severity) {
 }
 
 function openReport() {
-  window.open("/api/report", "_blank", "noopener");
+  window.open("/api/report?range=24h", "_blank", "noopener");
 }
 
 async function investigateIp(ip) {

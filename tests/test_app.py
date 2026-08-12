@@ -124,3 +124,16 @@ def test_report_endpoint_returns_html(client):
     response = client.get("/api/report", headers=auth_headers())
     assert response.status_code == 200
     assert b"ACF Security Report" in response.data
+    assert b"Generated at Unix time" not in response.data
+    assert b"MITRE ATT&CK Summary" in response.data
+
+
+def test_report_endpoint_supports_range_filter(client):
+    response = client.get("/api/report?range=24h", headers=auth_headers())
+    assert response.status_code == 200
+    assert b"Scope: Last 24 hours" in response.data
+
+
+def test_report_endpoint_rejects_bad_range(client):
+    response = client.get("/api/report?range=forever", headers=auth_headers())
+    assert response.status_code == 400

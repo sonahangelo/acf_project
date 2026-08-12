@@ -7,6 +7,7 @@ import secrets
 import sqlite3
 import subprocess
 import time
+from datetime import datetime, timezone
 from ipaddress import ip_address
 
 from flask import Flask, Response, jsonify, render_template, request
@@ -87,6 +88,42 @@ def parse_int_arg(name, default, minimum, maximum):
         raise BadRequest(f"{name} must be between {minimum} and {maximum}")
     return value
 
+
+REPORT_RANGES = {
+    "24h": (24 * 60 * 60, "Last 24 hours"),
+    "7d": (7 * 24 * 60 * 60, "Last 7 days"),
+    "30d": (30 * 24 * 60 * 60, "Last 30 days"),
+    "all": (None, "All available data"),
+}
+
+
+def format_report_time(ts):
+    if ts is None or ts == "":
+        return "-"
+    try:
+        ts_float = float(ts)
+    except (TypeError, ValueError):
+        return str(ts)
+    if ts_float <= 0:
+        return "-"
+    return datetime.fromtimestamp(ts_float, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def severity_rank(severity):
+    return {"critical": 4, "high": 3, "medium": 2, "low": 1}.get((severity or "").lower(), 0)
+
+
+def coalesce_alert_metadata(alert):
+    category = categorize_reason(alert.get("rule_reason"))
+    severity = alert.get("severity") or "unknown"
+    mitre = mitre_for_category(category)
+    return {
+        **alert,
+        "severity": severity,
+        "mitre_technique": alert.get("mitre_technique") or mitre["technique"],
+        "mitre_tactic": alert.get("mitre_tactic") or mitre["tactic"],
+        "category": category,
+    }
 
 
 @app.errorhandler(BadRequest)
@@ -456,50 +493,138 @@ def api_investigate_ip(ip):
 @app.route("/api/report")
 @auth.login_required
 def api_report():
+    range_key = request.args.get("range", "all").strip().lower() or "all"
+    if range_key not in REPORT_RANGES:
+        raise BadRequest("range must be one of: 24h, 7d, 30d, all")
+    window_seconds, range_label = REPORT_RANGES[range_key]
+    generated_at = time.time()
+    window_start = generated_at - window_seconds if window_seconds else None
+
+    where_clause = "WHERE timestamp >= ?" if window_start else ""
+    params = (window_start,) if window_start else ()
+
     conn = get_db()
     summary = {
-        "traffic_count": conn.execute("SELECT COUNT(*) FROM traffic").fetchone()[0],
-        "alert_count": conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0],
+        "traffic_count": conn.execute(
+            f"SELECT COUNT(*) FROM traffic {where_clause}", params
+        ).fetchone()[0],
+        "alert_count": conn.execute(
+            f"SELECT COUNT(*) FROM alerts {where_clause}", params
+        ).fetchone()[0],
         "blocked_count": conn.execute("SELECT COUNT(*) FROM blocked_ips").fetchone()[0],
-        "generated_at": time.time(),
+        "generated_at": generated_at,
+        "dry_run": cfg.get("dry_run", True),
+        "range_label": range_label,
     }
-    severity_rows = [dict(r) for r in conn.execute(
-        "SELECT COALESCE(severity, 'unknown') as severity, COUNT(*) as count FROM alerts GROUP BY COALESCE(severity, 'unknown')"
-    ).fetchall()]
-    top_alerts = [dict(r) for r in conn.execute(
-        """
+    top_alerts = [coalesce_alert_metadata(dict(r)) for r in conn.execute(
+        f"""
         SELECT timestamp, src_ip, dst_ip, severity, mitre_technique, mitre_tactic, rule_reason, feedback
-        FROM alerts ORDER BY id DESC LIMIT 25
-        """
+        FROM alerts {where_clause} ORDER BY id DESC LIMIT 50
+        """,
+        params,
     ).fetchall()]
-    top_offenders = [dict(r) for r in conn.execute(
-        """
-        SELECT src_ip, COUNT(*) as alert_count, MAX(timestamp) as last_seen,
-               MAX(COALESCE(severity, 'unknown')) as severity
-        FROM alerts GROUP BY src_ip ORDER BY alert_count DESC LIMIT 10
-        """
+    blocked_rows = [dict(r) for r in conn.execute(
+        "SELECT ip, blocked_at, reason, dry_run, expires_at FROM blocked_ips ORDER BY blocked_at DESC LIMIT 25"
     ).fetchall()]
     conn.close()
 
-    def esc(value):
-        return str(value if value is not None else "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    severity_counts = {}
+    mitre_counts = {}
+    offender_counts = {}
+    for alert in top_alerts:
+        severity_counts[alert["severity"]] = severity_counts.get(alert["severity"], 0) + 1
+        technique = alert.get("mitre_technique") or "Unmapped"
+        tactic = alert.get("mitre_tactic") or "Unknown"
+        mitre_counts[(technique, tactic)] = mitre_counts.get((technique, tactic), 0) + 1
+        src_ip = alert.get("src_ip") or "unknown"
+        offender_counts[src_ip] = offender_counts.get(src_ip, 0) + 1
 
-    rows = "".join(
-        f"<tr><td>{esc(a['timestamp'])}</td><td>{esc(a['src_ip'])}</td><td>{esc(a['dst_ip'])}</td>"
-        f"<td>{esc(a['severity'])}</td><td>{esc(a['mitre_technique'])}</td><td>{esc(a['mitre_tactic'])}</td>"
-        f"<td>{esc(a['rule_reason'])}</td><td>{esc(a['feedback'] or 'unlabeled')}</td></tr>"
+    def esc(value):
+        return str(value if value is not None else "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+    def badge(severity):
+        key = (severity or "unknown").lower()
+        return f"<span class='badge badge-{esc(key)}'>{esc(key.upper())}</span>"
+
+    severity_order = sorted(severity_counts.items(), key=lambda item: (-severity_rank(item[0]), item[0]))
+    severity_cards = "".join(
+        f"<div class='mini-card'><span>{esc(label.upper())}</span><strong>{count}</strong></div>"
+        for label, count in severity_order
+    ) or "<div class='muted'>No alerts in this report window.</div>"
+
+    mitre_rows = "".join(
+        f"<tr><td>{esc(technique)}</td><td>{esc(tactic)}</td><td>{count}</td></tr>"
+        for (technique, tactic), count in sorted(mitre_counts.items(), key=lambda item: -item[1])
+    ) or "<tr><td colspan='3' class='muted'>No MITRE mappings in this report window.</td></tr>"
+
+    offender_rows = "".join(
+        f"<tr><td>{esc(ip)}</td><td>{count}</td></tr>"
+        for ip, count in sorted(offender_counts.items(), key=lambda item: -item[1])[:10]
+    ) or "<tr><td colspan='2' class='muted'>No offenders in this report window.</td></tr>"
+
+    alert_rows = "".join(
+        f"<tr><td>{esc(format_report_time(a['timestamp']))}</td><td>{esc(a['src_ip'])}</td><td>{esc(a['dst_ip'])}</td>"
+        f"<td>{badge(a['severity'])}</td><td>{esc(a['mitre_technique'] or '-')}</td><td>{esc(a['mitre_tactic'] or '-')}</td>"
+        f"<td>{esc(a['rule_reason'] or 'ML anomaly')}</td><td>{esc(a['feedback'] or 'unlabeled')}</td></tr>"
         for a in top_alerts
-    )
-    sev = "".join(f"<li>{esc(r['severity'])}: {esc(r['count'])}</li>" for r in severity_rows)
-    offenders = "".join(f"<li>{esc(o['src_ip'])}: {esc(o['alert_count'])} alerts</li>" for o in top_offenders)
+    ) or "<tr><td colspan='8' class='muted'>No alerts in this report window.</td></tr>"
+
+    block_rows = "".join(
+        f"<tr><td>{esc(b['ip'])}</td><td>{esc(format_report_time(b['blocked_at']))}</td>"
+        f"<td>{esc(format_report_time(b['expires_at']) if b['expires_at'] else 'Permanent')}</td>"
+        f"<td>{esc('dry-run' if b['dry_run'] else 'live')}</td><td>{esc(b['reason'] or '')}</td></tr>"
+        for b in blocked_rows
+    ) or "<tr><td colspan='5' class='muted'>No blocked IPs.</td></tr>"
+
+    generated_label = format_report_time(summary["generated_at"])
+    mode_label = "Dry run" if summary["dry_run"] else "Live enforcement"
     html = f"""<!doctype html>
-<html><head><meta charset='utf-8'><title>ACF Security Report</title>
-<style>body{{font-family:Arial,sans-serif;margin:32px;color:#111827}}table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #d1d5db;padding:8px;font-size:12px}}th{{background:#f3f4f6;text-align:left}}.stats{{display:flex;gap:16px}}.card{{border:1px solid #d1d5db;padding:12px 16px}}</style>
-</head><body><h1>ACF Security Report</h1><p>Generated at Unix time {summary['generated_at']:.0f}</p>
-<div class='stats'><div class='card'><b>Traffic</b><br>{summary['traffic_count']}</div><div class='card'><b>Alerts</b><br>{summary['alert_count']}</div><div class='card'><b>Blocked IPs</b><br>{summary['blocked_count']}</div></div>
-<h2>Severity Summary</h2><ul>{sev}</ul><h2>Top Offenders</h2><ul>{offenders}</ul>
-<h2>Recent Alerts</h2><table><thead><tr><th>Time</th><th>Source</th><th>Destination</th><th>Severity</th><th>MITRE</th><th>Tactic</th><th>Reason</th><th>Feedback</th></tr></thead><tbody>{rows}</tbody></table>
-</body></html>"""
+<html>
+<head>
+<meta charset='utf-8'>
+<title>ACF Security Report</title>
+<style>
+:root {{ --ink:#111827; --muted:#64748b; --line:#d1d5db; --soft:#f8fafc; --panel:#ffffff; --blue:#0369a1; --red:#b91c1c; --amber:#b45309; --green:#047857; }}
+body {{ font-family: Arial, sans-serif; margin: 32px; color: var(--ink); background: #f3f4f6; }}
+.report {{ max-width: 1180px; margin: 0 auto; background: var(--panel); border: 1px solid var(--line); padding: 28px; }}
+h1 {{ margin: 0 0 6px; font-size: 30px; }}
+h2 {{ margin-top: 28px; font-size: 18px; }}
+.meta {{ color: var(--muted); margin: 0 0 22px; }}
+.stats, .mini-grid {{ display: flex; flex-wrap: wrap; gap: 12px; }}
+.card, .mini-card {{ border: 1px solid var(--line); background: var(--soft); padding: 12px 16px; min-width: 130px; }}
+.card span, .mini-card span {{ display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }}
+.card strong, .mini-card strong {{ display: block; font-size: 24px; margin-top: 6px; }}
+table {{ border-collapse: collapse; width: 100%; margin-top: 10px; }}
+td, th {{ border: 1px solid var(--line); padding: 8px; font-size: 12px; vertical-align: top; }}
+th {{ background: #e5e7eb; text-align: left; }}
+.badge {{ display:inline-block; min-width:68px; text-align:center; padding:3px 7px; border-radius:4px; font-size:10px; font-weight:700; }}
+.badge-critical {{ background:#fee2e2; color:#991b1b; }} .badge-high {{ background:#ffedd5; color:#9a3412; }}
+.badge-medium {{ background:#fef3c7; color:#92400e; }} .badge-low {{ background:#dbeafe; color:#1e40af; }} .badge-unknown {{ background:#e5e7eb; color:#475569; }}
+.muted {{ color: var(--muted); }}
+.footer {{ margin-top: 28px; color: var(--muted); font-size: 12px; }}
+@media print {{ body {{ background: white; margin: 0; }} .report {{ border: none; }} }}
+</style>
+</head>
+<body>
+<div class='report'>
+<h1>ACF Security Report</h1>
+<p class='meta'>Generated {esc(generated_label)} | Scope: {esc(summary['range_label'])} | Mode: {esc(mode_label)}</p>
+<div class='stats'>
+  <div class='card'><span>Traffic Logged</span><strong>{summary['traffic_count']}</strong></div>
+  <div class='card'><span>Alerts</span><strong>{summary['alert_count']}</strong></div>
+  <div class='card'><span>Blocked IPs</span><strong>{summary['blocked_count']}</strong></div>
+</div>
+<h2>Executive Summary</h2>
+<p>This report summarizes ACF observations for {esc(summary['range_label'].lower())}. Review high and critical findings first, validate older unmapped alerts as needed, and confirm firewall blocks before enabling or keeping live enforcement.</p>
+<h2>Severity Summary</h2><div class='mini-grid'>{severity_cards}</div>
+<h2>MITRE ATT&CK Summary</h2><table><thead><tr><th>Technique</th><th>Tactic</th><th>Alerts</th></tr></thead><tbody>{mitre_rows}</tbody></table>
+<h2>Top Offenders</h2><table><thead><tr><th>Source IP</th><th>Alerts</th></tr></thead><tbody>{offender_rows}</tbody></table>
+<h2>Current Blocklist</h2><table><thead><tr><th>IP</th><th>Blocked At</th><th>Expires</th><th>Mode</th><th>Reason</th></tr></thead><tbody>{block_rows}</tbody></table>
+<h2>Recent Alerts</h2><table><thead><tr><th>Time</th><th>Source</th><th>Destination</th><th>Severity</th><th>MITRE</th><th>Tactic</th><th>Reason</th><th>Feedback</th></tr></thead><tbody>{alert_rows}</tbody></table>
+<p class='footer'>Generated by ACF - Adaptive Cognitive Firewall. Use this report for study, research, triage, and defensive analysis.</p>
+</div>
+</body>
+</html>"""
     return Response(html, mimetype="text/html")
 
 
