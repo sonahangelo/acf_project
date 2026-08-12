@@ -18,7 +18,7 @@ from arp_monitor import ArpBindingTracker
 from threat_intel import ThreatIntel
 from ai_model import AnomalyModel
 from decision import decide
-from firewall import block_ip, load_blocked_ips
+from firewall import block_ip, cleanup_expired_blocks, load_blocked_ips
 from alerting import log_traffic, log_alert
 from utils import load_config
 from db import get_connection, init_db
@@ -218,6 +218,8 @@ def run_detect_mode(cfg):
     ).load()
     whitelist = set(cfg.get("whitelist", []) or [])
     dry_run = cfg.get("dry_run", True)
+    block_duration_seconds = cfg.get("block_duration_seconds")
+    cleanup_expired_blocks(conn, dry_run=dry_run)
     already_alerted = load_blocked_ips(conn)  # don't re-alert on IPs already blocked from a prior run
     if already_alerted:
         print(f"[main] Loaded {len(already_alerted)} previously blocked IP(s) from database")
@@ -248,7 +250,7 @@ def run_detect_mode(cfg):
                         arp_feats["rule_reason"] = reason
                         log_alert(conn, arp_feats, "BLOCK", 0.0, explanation=None)
                         already_alerted.add(arp_feats["src_ip"])
-                    block_ip(conn, arp_feats["src_ip"], dry_run=dry_run, reason=reason)
+                    block_ip(conn, arp_feats["src_ip"], dry_run=dry_run, reason=reason, duration_seconds=block_duration_seconds)
                 return
 
             feats = extract_features(pkt)
@@ -296,7 +298,7 @@ def run_detect_mode(cfg):
                         feats["rule_reason"] = rule_reason
                     log_alert(conn, feats, action, score, explanation=top_explanation)
                     already_alerted.add(feats["src_ip"])
-                block_ip(conn, feats["src_ip"], dry_run=dry_run, reason=feats.get("rule_reason", ""))
+                block_ip(conn, feats["src_ip"], dry_run=dry_run, reason=feats.get("rule_reason", ""), duration_seconds=block_duration_seconds)
         except Exception as e:
             import traceback
             print(f"[main] ERROR in packet handler: {e}")

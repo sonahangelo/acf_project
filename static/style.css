@@ -597,3 +597,48 @@ tbody tr {
   border-color: var(--info);
   color: var(--info);
 }
+
+.severity-tag {
+  display: inline-block;
+  min-width: 58px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.severity-critical { background: rgba(220, 38, 38, 0.18); color: #fca5a5; }
+.severity-high { background: rgba(239, 68, 68, 0.14); color: var(--danger); }
+.severity-medium { background: rgba(234, 179, 8, 0.14); color: var(--warn); }
+.severity-low { background: rgba(56, 189, 248, 0.12); color: var(--info); }
+.severity-unknown { background: rgba(100, 116, 139, 0.14); color: var(--muted); }
+
+.timeline-list {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.timeline-item {
+  border-left: 2px solid var(--info);
+  padding-left: 10px;
+}
+.timeline-item span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+.timeline-item strong {
+  color: var(--text);
+  font-size: 12px;
+}
+.timeline-item p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  line-height: 1.4;
+}

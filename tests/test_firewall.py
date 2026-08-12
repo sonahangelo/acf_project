@@ -3,7 +3,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 from db import init_db
-from firewall import block_ip, unblock_ip, load_blocked_ips
+from firewall import block_ip, unblock_ip, load_blocked_ips, cleanup_expired_blocks
 
 
 @pytest.fixture
@@ -50,3 +50,16 @@ def test_block_ip_rejects_invalid_ip(conn):
 def test_unblock_ip_rejects_invalid_ip(conn):
     with pytest.raises(ValueError):
         unblock_ip(conn, "1.2.3.4;rm -rf /", dry_run=True)
+
+
+def test_block_ip_sets_expiration(conn):
+    block_ip(conn, "9.9.9.9", dry_run=True, duration_seconds=60)
+    row = conn.execute("SELECT blocked_at, expires_at FROM blocked_ips WHERE ip = ?", ("9.9.9.9",)).fetchone()
+    assert row[1] > row[0]
+
+
+def test_cleanup_expired_blocks_removes_old_rows(conn):
+    block_ip(conn, "9.9.9.9", dry_run=True, duration_seconds=1)
+    conn.execute("UPDATE blocked_ips SET expires_at = 1 WHERE ip = ?", ("9.9.9.9",))
+    cleanup_expired_blocks(conn, dry_run=True)
+    assert "9.9.9.9" not in load_blocked_ips(conn)

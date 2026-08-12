@@ -2,6 +2,7 @@ import os
 import sqlite3
 import pytest
 import app as app_module
+from db import init_db
 
 
 def auth_headers():
@@ -19,37 +20,9 @@ def client():
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
 
-    # Initialize the database schema and tables before running tests
-    if hasattr(app_module, "init_db"):
-        app_module.init_db()
-    else:
-        conn = sqlite3.connect(db_path)
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS traffic (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp REAL,
-                src_ip TEXT,
-                dst_ip TEXT
-            );
-            CREATE TABLE IF NOT EXISTS alerts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp REAL,
-                src_ip TEXT,
-                dst_ip TEXT,
-                action TEXT,
-                score REAL,
-                rule_reason TEXT,
-                top_reasons TEXT,
-                feedback TEXT
-            );
-            CREATE TABLE IF NOT EXISTS blocked_ips (
-                ip TEXT PRIMARY KEY,
-                blocked_at REAL,
-                reason TEXT,
-                dry_run INTEGER
-            );
-        """)
-        conn.close()
+    conn = sqlite3.connect(db_path)
+    init_db(conn)
+    conn.close()
 
     with app_module.app.test_client() as client:
         yield client
@@ -123,3 +96,31 @@ def test_unblock_rejects_invalid_ip(client):
         headers=auth_headers(),
     )
     assert response.status_code == 400
+
+
+def test_investigate_endpoint_returns_ip_context(client):
+    db_path = app_module.cfg.get("db_path", "data/acf.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO alerts (timestamp, src_ip, dst_ip, action, score, rule_reason, severity, mitre_technique, mitre_tactic) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (123.0, "8.8.8.8", "1.1.1.1", "BLOCK", -0.2, "brute_force test", "high", "T1110", "Credential Access"),
+    )
+    conn.execute(
+        "INSERT INTO traffic (timestamp, src_ip, dst_ip, packet_length) VALUES (?, ?, ?, ?)",
+        (122.0, "8.8.8.8", "1.1.1.1", 100),
+    )
+    conn.commit()
+    conn.close()
+
+    response = client.get("/api/investigate/8.8.8.8", headers=auth_headers())
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["ip"] == "8.8.8.8"
+    assert data["alerts"]
+    assert data["timeline"]
+
+
+def test_report_endpoint_returns_html(client):
+    response = client.get("/api/report", headers=auth_headers())
+    assert response.status_code == 200
+    assert b"ACF Security Report" in response.data

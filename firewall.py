@@ -13,8 +13,28 @@ from ipaddress import ip_address
 
 def load_blocked_ips(conn):
     """Returns a set of IPs currently recorded as blocked."""
-    rows = conn.execute("SELECT ip FROM blocked_ips").fetchall()
+    rows = conn.execute(
+        "SELECT ip FROM blocked_ips WHERE expires_at IS NULL OR expires_at > ?",
+        (time.time(),),
+    ).fetchall()
     return {row[0] for row in rows}
+
+
+def cleanup_expired_blocks(conn, dry_run=True):
+    now = time.time()
+    rows = conn.execute(
+        "SELECT ip, dry_run FROM blocked_ips WHERE expires_at IS NOT NULL AND expires_at <= ?",
+        (now,),
+    ).fetchall()
+    for ip, row_dry_run in rows:
+        if not dry_run and not row_dry_run:
+            cmd = ["sudo", "iptables", "-D", "INPUT", "-s", ip, "-j", "DROP"]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"[firewall] FAILED to expire block for {ip}: {result.stderr.strip()}")
+                continue
+        conn.execute("DELETE FROM blocked_ips WHERE ip = ?", (ip,))
+        print(f"[firewall] Expired block for {ip}")
 
 
 def _normalize_ip(ip):
@@ -24,7 +44,7 @@ def _normalize_ip(ip):
         raise ValueError(f"invalid IP address: {ip!r}") from exc
 
 
-def block_ip(conn, ip, dry_run=True, reason=""):
+def block_ip(conn, ip, dry_run=True, reason="", duration_seconds=None):
     ip = _normalize_ip(ip)
     already = conn.execute("SELECT 1 FROM blocked_ips WHERE ip = ?", (ip,)).fetchone()
     if already:
@@ -40,11 +60,12 @@ def block_ip(conn, ip, dry_run=True, reason=""):
             return
         print(f"[firewall] Blocked {ip}")
 
+    blocked_at = time.time()
+    expires_at = blocked_at + duration_seconds if duration_seconds else None
     conn.execute(
-        "INSERT OR REPLACE INTO blocked_ips (ip, blocked_at, reason, dry_run) VALUES (?, ?, ?, ?)",
-        (ip, time.time(), reason, 1 if dry_run else 0),
+        "INSERT OR REPLACE INTO blocked_ips (ip, blocked_at, reason, dry_run, expires_at) VALUES (?, ?, ?, ?, ?)",
+        (ip, blocked_at, reason, 1 if dry_run else 0, expires_at),
     )
-
 
 def unblock_ip(conn, ip, dry_run=True):
     ip = _normalize_ip(ip)

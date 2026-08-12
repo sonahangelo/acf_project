@@ -26,7 +26,7 @@ OPTIONAL_NUMERIC_KEYS = [
     "icmp_window_seconds", "icmp_flood_threshold",
     "brute_force_threshold", "ttl_anomaly_threshold",
     "slowloris_min_duration_seconds", "slowloris_max_bps",
-    "slowloris_min_connections",
+    "slowloris_min_connections", "block_duration_seconds",
 ]
 
 OPTIONAL_LIST_KEYS = ["brute_force_ports", "threat_intel_files", "threat_intel_indicators"]

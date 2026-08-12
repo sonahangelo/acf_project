@@ -15,7 +15,8 @@ from werkzeug.exceptions import BadRequest
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from utils import load_config
-from firewall import unblock_ip
+from detection_metadata import categorize_reason, mitre_for_category
+from firewall import cleanup_expired_blocks, unblock_ip
 
 app = Flask(__name__)
 auth = HTTPBasicAuth()
@@ -48,25 +49,6 @@ def verify_password(username, password):
 cfg = load_config("config.yml")
 _dashboard_start_time = time.time()
 
-REASON_CATEGORIES = {
-    "port_scan": "port_scan",
-    "syn_flood": "syn_flood",
-    "repeated_port_probe": "repeated_port_probe",
-    "possible_exfiltration": "exfiltration",
-    "arp_spoofing": "arp_spoofing",
-    "dns_tunneling": "dns_tunneling",
-    "stealth_scan": "stealth_scan",
-    "icmp_flood": "icmp_flood",
-    "brute_force": "brute_force",
-    "invalid_flags": "invalid_flags",
-    "ttl_anomaly": "ttl_anomaly",
-    "slowloris": "slowloris",
-    "smurf_attack": "smurf_attack",
-    "rogue_dhcp": "rogue_dhcp",
-    "threat_intel": "threat_intel",
-}
-
-
 def get_db():
     db_path = cfg.get("db_path", "data/acf.db")
     db_dir = os.path.dirname(db_path)
@@ -77,12 +59,8 @@ def get_db():
     return conn
     
 def categorize(rule_reason):
-    if not rule_reason:
-        return "ml_anomaly"
-    for prefix, category in REASON_CATEGORIES.items():
-        if rule_reason.startswith(prefix):
-            return category
-    return "ml_anomaly"
+    category = categorize_reason(rule_reason)
+    return "exfiltration" if category == "possible_exfiltration" else category
 
 
 @app.before_request
@@ -226,7 +204,7 @@ def api_alerts():
     limit = parse_int_arg("limit", 50, 1, 500)
 
     query = ("SELECT id, timestamp, src_ip, dst_ip, action, score, rule_reason, "
-              "top_reasons, feedback FROM alerts WHERE 1=1")
+              "top_reasons, feedback, severity, mitre_technique, mitre_tactic FROM alerts WHERE 1=1")
     params = []
 
     if search:
@@ -325,8 +303,9 @@ def api_alert_breakdown():
 @auth.login_required
 def api_blocklist():
     conn = get_db()
+    cleanup_expired_blocks(conn, dry_run=cfg.get("dry_run", True))
     rows = conn.execute(
-        "SELECT ip, blocked_at, reason, dry_run FROM blocked_ips ORDER BY blocked_at DESC"
+        "SELECT ip, blocked_at, reason, dry_run, expires_at FROM blocked_ips ORDER BY blocked_at DESC"
     ).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
@@ -389,7 +368,9 @@ def api_top_offenders():
                MAX(a.timestamp) as last_seen,
                (SELECT rule_reason FROM alerts a2
                 WHERE a2.src_ip = a.src_ip ORDER BY a2.id DESC LIMIT 1) as last_reason,
-               (SELECT 1 FROM blocked_ips b WHERE b.ip = a.src_ip) as is_blocked
+               (SELECT 1 FROM blocked_ips b WHERE b.ip = a.src_ip AND (b.expires_at IS NULL OR b.expires_at > strftime('%s','now'))) as is_blocked,
+               (SELECT severity FROM alerts a3 WHERE a3.src_ip = a.src_ip ORDER BY a3.id DESC LIMIT 1) as severity,
+               (SELECT mitre_technique FROM alerts a4 WHERE a4.src_ip = a.src_ip ORDER BY a4.id DESC LIMIT 1) as mitre_technique
         FROM alerts a
         GROUP BY a.src_ip
         ORDER BY alert_count DESC
@@ -399,6 +380,127 @@ def api_top_offenders():
     ).fetchall()
     conn.close()
     return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/investigate/<ip>")
+@auth.login_required
+def api_investigate_ip(ip):
+    try:
+        normalized_ip = str(ip_address(ip))
+    except ValueError:
+        return jsonify({"error": f"{ip} is not a valid IP address"}), 400
+
+    conn = get_db()
+    alert_rows = [dict(r) for r in conn.execute(
+        """
+        SELECT id, timestamp, src_ip, dst_ip, action, score, rule_reason, top_reasons,
+               feedback, severity, mitre_technique, mitre_tactic
+        FROM alerts
+        WHERE src_ip = ? OR dst_ip = ?
+        ORDER BY timestamp DESC
+        LIMIT 100
+        """,
+        (normalized_ip, normalized_ip),
+    ).fetchall()]
+    traffic_summary = conn.execute(
+        """
+        SELECT COUNT(*) as traffic_count,
+               MIN(timestamp) as first_seen,
+               MAX(timestamp) as last_seen,
+               COUNT(DISTINCT dst_ip) as distinct_destinations,
+               COUNT(DISTINCT dst_port) as distinct_ports,
+               SUM(packet_length) as bytes_observed
+        FROM traffic
+        WHERE src_ip = ? OR dst_ip = ?
+        """,
+        (normalized_ip, normalized_ip),
+    ).fetchone()
+    blocked = conn.execute(
+        "SELECT ip, blocked_at, reason, dry_run, expires_at FROM blocked_ips WHERE ip = ?",
+        (normalized_ip,),
+    ).fetchone()
+    severity_counts = [dict(r) for r in conn.execute(
+        """
+        SELECT COALESCE(severity, 'unknown') as severity, COUNT(*) as count
+        FROM alerts WHERE src_ip = ? OR dst_ip = ?
+        GROUP BY COALESCE(severity, 'unknown')
+        """,
+        (normalized_ip, normalized_ip),
+    ).fetchall()]
+    conn.close()
+
+    timeline = []
+    if traffic_summary and traffic_summary["first_seen"]:
+        timeline.append({"timestamp": traffic_summary["first_seen"], "event": "first_seen", "detail": "First traffic observed"})
+    for alert in reversed(alert_rows[-25:]):
+        category = categorize(alert.get("rule_reason"))
+        timeline.append({
+            "timestamp": alert.get("timestamp"),
+            "event": category,
+            "detail": alert.get("rule_reason") or "ML anomaly",
+            "severity": alert.get("severity"),
+        })
+    if blocked:
+        timeline.append({"timestamp": blocked["blocked_at"], "event": "blocked", "detail": blocked["reason"] or "Blocked"})
+
+    return jsonify({
+        "ip": normalized_ip,
+        "traffic": dict(traffic_summary) if traffic_summary else {},
+        "blocked": dict(blocked) if blocked else None,
+        "severity_counts": severity_counts,
+        "alerts": alert_rows,
+        "timeline": sorted(timeline, key=lambda e: e.get("timestamp") or 0),
+    })
+
+
+@app.route("/api/report")
+@auth.login_required
+def api_report():
+    conn = get_db()
+    summary = {
+        "traffic_count": conn.execute("SELECT COUNT(*) FROM traffic").fetchone()[0],
+        "alert_count": conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0],
+        "blocked_count": conn.execute("SELECT COUNT(*) FROM blocked_ips").fetchone()[0],
+        "generated_at": time.time(),
+    }
+    severity_rows = [dict(r) for r in conn.execute(
+        "SELECT COALESCE(severity, 'unknown') as severity, COUNT(*) as count FROM alerts GROUP BY COALESCE(severity, 'unknown')"
+    ).fetchall()]
+    top_alerts = [dict(r) for r in conn.execute(
+        """
+        SELECT timestamp, src_ip, dst_ip, severity, mitre_technique, mitre_tactic, rule_reason, feedback
+        FROM alerts ORDER BY id DESC LIMIT 25
+        """
+    ).fetchall()]
+    top_offenders = [dict(r) for r in conn.execute(
+        """
+        SELECT src_ip, COUNT(*) as alert_count, MAX(timestamp) as last_seen,
+               MAX(COALESCE(severity, 'unknown')) as severity
+        FROM alerts GROUP BY src_ip ORDER BY alert_count DESC LIMIT 10
+        """
+    ).fetchall()]
+    conn.close()
+
+    def esc(value):
+        return str(value if value is not None else "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    rows = "".join(
+        f"<tr><td>{esc(a['timestamp'])}</td><td>{esc(a['src_ip'])}</td><td>{esc(a['dst_ip'])}</td>"
+        f"<td>{esc(a['severity'])}</td><td>{esc(a['mitre_technique'])}</td><td>{esc(a['mitre_tactic'])}</td>"
+        f"<td>{esc(a['rule_reason'])}</td><td>{esc(a['feedback'] or 'unlabeled')}</td></tr>"
+        for a in top_alerts
+    )
+    sev = "".join(f"<li>{esc(r['severity'])}: {esc(r['count'])}</li>" for r in severity_rows)
+    offenders = "".join(f"<li>{esc(o['src_ip'])}: {esc(o['alert_count'])} alerts</li>" for o in top_offenders)
+    html = f"""<!doctype html>
+<html><head><meta charset='utf-8'><title>ACF Security Report</title>
+<style>body{{font-family:Arial,sans-serif;margin:32px;color:#111827}}table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #d1d5db;padding:8px;font-size:12px}}th{{background:#f3f4f6;text-align:left}}.stats{{display:flex;gap:16px}}.card{{border:1px solid #d1d5db;padding:12px 16px}}</style>
+</head><body><h1>ACF Security Report</h1><p>Generated at Unix time {summary['generated_at']:.0f}</p>
+<div class='stats'><div class='card'><b>Traffic</b><br>{summary['traffic_count']}</div><div class='card'><b>Alerts</b><br>{summary['alert_count']}</div><div class='card'><b>Blocked IPs</b><br>{summary['blocked_count']}</div></div>
+<h2>Severity Summary</h2><ul>{sev}</ul><h2>Top Offenders</h2><ul>{offenders}</ul>
+<h2>Recent Alerts</h2><table><thead><tr><th>Time</th><th>Source</th><th>Destination</th><th>Severity</th><th>MITRE</th><th>Tactic</th><th>Reason</th><th>Feedback</th></tr></thead><tbody>{rows}</tbody></table>
+</body></html>"""
+    return Response(html, mimetype="text/html")
 
 
 if __name__ == "__main__":

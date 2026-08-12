@@ -63,6 +63,48 @@ let audioCtx = null;
 let currentRange = "30m";
 const RANGE_LABELS = { "30m": "last 30 min", "1h": "last hour", "6h": "last 6 hours", "24h": "last 24 hours" };
 
+const SEVERITY_LABELS = { critical: "Critical", high: "High", medium: "Medium", low: "Low", unknown: "Unknown" };
+
+function severityTag(severity) {
+  const key = severity || "unknown";
+  return `<span class="severity-tag severity-${escapeHTML(key)}">${SEVERITY_LABELS[key] || escapeHTML(key)}</span>`;
+}
+
+function openReport() {
+  window.open("/api/report", "_blank", "noopener");
+}
+
+async function investigateIp(ip) {
+  try {
+    const data = await fetchJSON(`/api/investigate/${encodeURIComponent(ip)}`);
+    if (data.error) {
+      showToast(data.error, "error");
+      return;
+    }
+    const blocked = data.blocked ? `Blocked since ${formatTime(data.blocked.blocked_at)}${data.blocked.expires_at ? `, expires ${formatTime(data.blocked.expires_at)}` : ", permanent"}` : "Not currently blocked";
+    const traffic = data.traffic || {};
+    const timeline = (data.timeline || []).map(e => `
+      <div class="timeline-item">
+        <span>${formatTime(e.timestamp)}</span>
+        <strong>${escapeHTML(e.event)}</strong>
+        <p>${escapeHTML(e.detail)}</p>
+      </div>`).join("") || '<div class="empty">No timeline events</div>';
+    document.getElementById("modalBody").innerHTML = `
+      <div class="modal-field"><span class="modal-field-label">IP</span><span>${escapeHTML(data.ip)}</span></div>
+      <div class="modal-field"><span class="modal-field-label">Status</span><span>${escapeHTML(blocked)}</span></div>
+      <div class="modal-field"><span class="modal-field-label">Traffic Rows</span><span>${traffic.traffic_count || 0}</span></div>
+      <div class="modal-field"><span class="modal-field-label">Bytes Observed</span><span>${formatBytes(traffic.bytes_observed || 0)}</span></div>
+      <div class="modal-field"><span class="modal-field-label">First Seen</span><span>${formatTime(traffic.first_seen)}</span></div>
+      <div class="modal-field"><span class="modal-field-label">Last Seen</span><span>${formatTime(traffic.last_seen)}</span></div>
+      <div class="modal-field-full"><span class="modal-field-label">Timeline</span><div class="timeline-list">${timeline}</div></div>
+    `;
+    document.getElementById("alertModalOverlay").classList.remove("modal-hidden");
+  } catch (e) {
+    showToast("Investigation lookup failed", "error");
+    console.error("investigateIp failed:", e);
+  }
+}
+
 function csrfHeaders(extra = {}) {
   const token = document.querySelector('meta[name="acf-csrf-token"]')?.content || "";
   return { ...extra, "X-ACF-CSRF-Token": token };
@@ -253,9 +295,9 @@ function exportAlertsToCsv() {
     showToast("No alerts to export", "error");
     return;
   }
-  const headers = ["id", "time", "src_ip", "dst_ip", "score", "reason", "feedback"];
+  const headers = ["id", "time", "src_ip", "dst_ip", "severity", "mitre", "score", "reason", "feedback"];
   const rows = lastAlertsData.map(a => [
-    a.id, formatTime(a.timestamp), a.src_ip, a.dst_ip, a.score,
+    a.id, formatTime(a.timestamp), a.src_ip, a.dst_ip, a.severity || "unknown", a.mitre_technique || "", a.score,
     `"${(a.rule_reason || a.top_reasons || "").replace(/"/g, '""')}"`,
     a.feedback || "none",
   ]);
@@ -288,12 +330,15 @@ function openModal(alert) {
     <div class="modal-field"><span class="modal-field-label">Time</span><span>${formatTime(alert.timestamp)}</span></div>
     <div class="modal-field"><span class="modal-field-label">Source</span><span>${alert.src_ip}</span></div>
     <div class="modal-field"><span class="modal-field-label">Destination</span><span>${alert.dst_ip}</span></div>
+    <div class="modal-field"><span class="modal-field-label">Severity</span><span>${severityTag(alert.severity)}</span></div>
     <div class="modal-field"><span class="modal-field-label">Score</span><span>${alert.score.toFixed(4)}</span></div>
     <div class="modal-field"><span class="modal-field-label">Type</span><span><span class="type-dot" style="background:${color}"></span>${label}</span></div>
+    <div class="modal-field"><span class="modal-field-label">MITRE</span><span>${escapeHTML(alert.mitre_technique || '-')} ${escapeHTML(alert.mitre_tactic || '')}</span></div>
     <div class="modal-field-full"><span class="modal-field-label">Rule Reason</span><div class="modal-longtext">${alert.rule_reason || '(none -- flagged by ML model)'}</div></div>
     <div class="modal-field-full"><span class="modal-field-label">Feature Explanation</span><div class="modal-longtext">${alert.top_reasons || '(not recorded)'}</div></div>
     <div class="modal-field"><span class="modal-field-label">Feedback</span><span class="feedback-tag feedback-${feedback}">${feedback}</span></div>
     <div class="modal-actions">
+      <button class="action-btn" onclick="investigateIp('${escapeHTML(alert.src_ip)}')">Investigate Source</button>
       <button class="action-btn action-btn-fp" onclick="markFeedback(${alert.id}, 'false_positive')">Mark False Positive</button>
       <button class="action-btn action-btn-ct" onclick="markFeedback(${alert.id}, 'confirmed_threat')">Mark Confirmed Threat</button>
     </div>
@@ -316,7 +361,7 @@ async function refreshAlerts() {
   lastAlertsData = alerts;
   const body = document.getElementById("alertsBody");
   if (alerts.length === 0) {
-    body.innerHTML = '<tr><td colspan="7" class="empty">No alerts match these filters</td></tr>';
+    body.innerHTML = '<tr><td colspan="9" class="empty">No alerts match these filters</td></tr>';
     return;
   }
 
@@ -339,12 +384,15 @@ async function refreshAlerts() {
 
     return `<tr class="${isNew}" onclick="openModal(${alertJson})">
       <td>${formatTime(a.timestamp)}</td>
-      <td>${a.src_ip}</td>
-      <td>${a.dst_ip}</td>
+      <td>${escapeHTML(a.src_ip)}</td>
+      <td>${escapeHTML(a.dst_ip)}</td>
+      <td>${severityTag(a.severity)}</td>
       <td class="${scoreClass}"><span class="score-pill ${scoreClass}">${a.score.toFixed(3)}</span></td>
-      <td>${truncate(reason, 60)}</td>
+      <td>${escapeHTML(a.mitre_technique || '-')}</td>
+      <td>${escapeHTML(truncate(reason, 60))}</td>
       <td><span class="feedback-tag feedback-${feedback}">${feedback}</span></td>
       <td class="actions-cell" onclick="event.stopPropagation()">
+        <button class="action-btn" onclick="investigateIp('${escapeHTML(a.src_ip)}')">Investigate</button>
         <button class="action-btn action-btn-fp ${fpActive}" onclick="markFeedback(${a.id}, 'false_positive')">FP</button>
         <button class="action-btn action-btn-ct ${ctActive}" onclick="markFeedback(${a.id}, 'confirmed_threat')">Threat</button>
       </td>
@@ -393,7 +441,7 @@ async function refreshBlocklist() {
   const blocked = await fetchJSON("/api/blocklist");
   const body = document.getElementById("blocklistBody");
   if (blocked.length === 0) {
-    body.innerHTML = '<tr><td colspan="5" class="empty">No IPs currently blocked</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="empty">No IPs currently blocked</td></tr>';
     return;
   }
   body.innerHTML = blocked.map(b => {
@@ -402,8 +450,9 @@ async function refreshBlocklist() {
       <td>${b.ip}</td>
       <td>${formatTime(b.blocked_at)}</td>
       <td>${mode}</td>
-      <td>${truncate(b.reason || "", 60)}</td>
-      <td><button class="action-btn action-btn-unblock" onclick="unblockIp('${b.ip}')">Unblock</button></td>
+      <td>${escapeHTML(truncate(b.reason || "", 60))}</td>
+      <td>${b.expires_at ? formatTime(b.expires_at) : "Permanent"}</td>
+      <td><button class="action-btn" onclick="investigateIp('${escapeHTML(b.ip)}')">Investigate</button><button class="action-btn action-btn-unblock" onclick="unblockIp('${escapeHTML(b.ip)}')">Unblock</button></td>
     </tr>`;
   }).join("");
 }
@@ -422,11 +471,11 @@ async function refreshTopOffenders() {
       ? '<span class="feedback-tag feedback-confirmed_threat">blocked</span>'
       : '<span class="feedback-tag feedback-none">not blocked</span>';
     return `<tr>
-      <td>${o.src_ip}</td>
+      <td>${escapeHTML(o.src_ip)}</td>
       <td>${o.alert_count}</td>
       <td>${formatTime(o.last_seen)}</td>
-      <td>${truncate(label + (o.last_reason ? ': ' + o.last_reason : ''), 50)}</td>
-      <td>${statusBadge}</td>
+      <td>${escapeHTML(truncate(label + (o.last_reason ? ': ' + o.last_reason : ''), 50))}</td>
+      <td>${severityTag(o.severity)} ${statusBadge} <button class="action-btn" onclick="investigateIp('${escapeHTML(o.src_ip)}')">Investigate</button></td>
     </tr>`;
   }).join("");
 }
@@ -490,6 +539,7 @@ document.getElementById("searchInput").addEventListener("input", () => {
 document.getElementById("reasonFilter").addEventListener("change", refreshAlerts);
 document.getElementById("feedbackFilter").addEventListener("change", refreshAlerts);
 document.getElementById("exportBtn").addEventListener("click", exportAlertsToCsv);
+document.getElementById("reportBtn").addEventListener("click", openReport);
 document.getElementById("modalClose").addEventListener("click", closeModal);
 document.getElementById("alertModalOverlay").addEventListener("click", (e) => {
   if (e.target.id === "alertModalOverlay") closeModal();

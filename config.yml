@@ -3,6 +3,8 @@ bpf_filter: ""
 flush_every: 20
 contamination: 0.02
 dry_run: true
+# Set to null for permanent blocks, or a number of seconds for temporary blocks.
+block_duration_seconds: 3600
 
 scan_window_seconds: 5
 flow_timeout_seconds: 30

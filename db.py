@@ -15,7 +15,7 @@ TRAFFIC_COLUMNS = [
     "slow_flow_count",
 ]
 
-ALERT_EXTRA_COLUMNS = ["action", "score", "top_reasons", "rule_reason"]
+ALERT_EXTRA_COLUMNS = ["action", "score", "top_reasons", "rule_reason", "severity", "mitre_technique", "mitre_tactic"]
 
 
 def get_connection(db_path):
@@ -39,7 +39,8 @@ def init_db(conn):
             ip TEXT PRIMARY KEY,
             blocked_at REAL,
             reason TEXT,
-            dry_run INTEGER
+            dry_run INTEGER,
+            expires_at REAL
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_traffic_src_ip ON traffic(src_ip)")
@@ -57,10 +58,15 @@ def init_db(conn):
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_src_ip ON alerts(src_ip)")
 
-    # Add feedback column if it doesn't exist yet (safe to run repeatedly)
+    # Add columns if they do not exist yet (safe to run repeatedly).
     existing_cols = [row[1] for row in conn.execute("PRAGMA table_info(alerts)").fetchall()]
-    if "feedback" not in existing_cols:
-        conn.execute("ALTER TABLE alerts ADD COLUMN feedback TEXT")
+    for col in ("feedback", "severity", "mitre_technique", "mitre_tactic"):
+        if col not in existing_cols:
+            conn.execute(f"ALTER TABLE alerts ADD COLUMN {col} TEXT")
+
+    blocked_cols = [row[1] for row in conn.execute("PRAGMA table_info(blocked_ips)").fetchall()]
+    if "expires_at" not in blocked_cols:
+        conn.execute("ALTER TABLE blocked_ips ADD COLUMN expires_at REAL")
 
 def insert_row(conn, table, row_dict):
     cols = list(row_dict.keys())
