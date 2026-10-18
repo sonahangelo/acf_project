@@ -8,6 +8,8 @@ contamination: 0.02
 dry_run: true
 # Set to null for permanent blocks, or a number of seconds for temporary blocks.
 block_duration_seconds: 3600
+# How frequently the engine removes expired temporary firewall blocks.
+block_maintenance_interval_seconds: 30
 
 scan_window_seconds: 5
 flow_timeout_seconds: 30

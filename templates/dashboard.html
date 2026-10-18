@@ -16,17 +16,24 @@
   <header class="topbar">
     <div class="brand">
       <img src="/static/icon-32.png" alt="" width="28" height="28" class="brand-icon">
-      <span class="brand-mark">ACF</span>
-      <span class="brand-sub">Adaptive Cognitive Firewall</span>
+      <div>
+        <span class="brand-mark">ACF</span>
+        <span class="brand-sub">Adaptive Cognitive Firewall</span>
+      </div>
     </div>
     <div class="topbar-right">
-      <button id="soundToggle" class="icon-btn" title="Toggle alert sound">🔔</button>
-      <div class="health-dot" id="healthDot" title="Detection service status"></div>
+      <div class="engine-status"><span class="health-dot" id="healthDot" aria-hidden="true"></span><span id="engineStatusText">Checking engine</span></div>
+      <button id="soundToggle" class="icon-btn" type="button" aria-label="Toggle alert sound" title="Toggle alert sound">Sound</button>
       <div class="mode-indicator" id="modeIndicator">—</div>
     </div>
   </header>
 
   <main class="grid">
+    <section class="command-strip" aria-label="Dashboard status">
+      <div><span class="command-label">Security operations</span><strong>Network activity overview</strong></div>
+      <div id="refreshState" class="refresh-state" aria-live="polite">Updating data</div>
+    </section>
+
     <section class="stat-row">
       <div class="stat-card">
         <div class="stat-label">Traffic Logged</div>
@@ -107,7 +114,7 @@
       <div class="panel-header panel-header-with-controls">
         <h2>Recent Alerts</h2>
         <div class="filter-bar">
-          <input type="text" id="searchInput" placeholder="Search IP or reason…" class="filter-input">
+          <input type="search" id="searchInput" placeholder="Search IP or reason" class="filter-input" aria-label="Search alerts">
           <select id="reasonFilter" class="filter-select">
             <option value="">All types</option>
             <option value="port_scan">Port scan</option>
@@ -187,7 +194,7 @@
     <div class="modal-box">
       <div class="modal-header">
         <h3>Alert Details</h3>
-        <button id="modalClose" class="icon-btn">✕</button>
+        <button id="modalClose" class="icon-btn" type="button" aria-label="Close alert details">Close</button>
       </div>
       <div id="modalBody" class="modal-body"></div>
     </div>
@@ -196,87 +203,5 @@
   <div id="toastContainer" class="toast-container"></div>
 
 <script src="/static/dashboard.js"></script>
-  <script>
-    // 1. SSE Listener for Live Auto-Refresh
-    const eventSource = new EventSource('/api/stream-alerts');
-
-    eventSource.onmessage = function(event) {
-        if (event.data === 'update') {
-            console.log('New threat logged! Triggering dashboard refresh...');
-            // Trigger dashboard.js built-in update if present, or fetch alerts
-            if (typeof renderAlerts === 'function') {
-                renderAlerts();
-            } else if (typeof fetchAlerts === 'function') {
-                fetchAlerts();
-            } else if (window.location.reload) {
-                // Fallback: refresh data tables cleanly
-                fetchThreatLogs();
-            }
-        }
-    };
-
-    function fetchThreatLogs() {
-        const currentUrlParams = window.location.search;
-        fetch(`/api/alerts${currentUrlParams}`)
-            .then(res => res.json())
-            .then(data => {
-                const tbody = document.getElementById('alertsBody');
-                if (!tbody) return;
-
-                if (!data || data.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="7" class="empty">No alerts recorded</td></tr>';
-                    return;
-                }
-
-                tbody.innerHTML = '';
-                data.forEach(alert => {
-                    const row = document.createElement('tr');
-                    row.innerHTML = `
-                        <td>${alert.timestamp || ''}</td>
-                        <td><strong style="color: #ff4d4d;">${alert.src_ip || ''}</strong></td>
-                        <td>${alert.dst_ip || ''}</td>
-                        <td>${alert.score !== null ? alert.score : '—'}</td>
-                        <td>${alert.rule_reason || alert.top_reasons || '—'}</td>
-                        <td><span class="badge">${alert.feedback || 'unlabeled'}</span></td>
-                        <td><span class="badge danger">${alert.action || 'Blocked'}</span></td>
-                    `;
-                    tbody.appendChild(row);
-                });
-            })
-            .catch(err => console.error('Error auto-refreshing alerts:', err));
-    }
-
-    eventSource.onerror = function() {
-        console.warn('SSE connection lost, reconnecting...');
-    };
-
-    // 2. Real-time Service Health Indicator Probe
-    function checkServiceStatus() {
-        fetch('/api/status')
-            .then(res => res.json())
-            .then(data => {
-                const healthDot = document.getElementById('healthDot');
-                const modeIndicator = document.getElementById('modeIndicator');
-
-                if (healthDot) {
-                    healthDot.style.backgroundColor = data.active ? '#10b981' : '#ef4444';
-                    healthDot.title = data.active ? 'Detection Engine: ACTIVE' : 'Detection Engine: INACTIVE';
-                }
-
-                if (modeIndicator) {
-                    modeIndicator.textContent = data.active ? 'LIVE / DETECT' : 'INACTIVE';
-                    modeIndicator.style.color = data.active ? '#10b981' : '#ef4444';
-                }
-            })
-            .catch(() => {
-                const healthDot = document.getElementById('healthDot');
-                if (healthDot) healthDot.style.backgroundColor = '#f59e0b';
-            });
-    }
-
-    // Poll detection status every 3 seconds
-    checkServiceStatus();
-    setInterval(checkServiceStatus, 3000);
-  </script>
 </body>
 </html>

@@ -6,6 +6,7 @@ main.py -- ACF Entry Point (CLI)
 """
 
 import argparse
+import threading
 
 from scapy.all import ARP
 from capture import start_capture
@@ -21,7 +22,28 @@ from decision import decide
 from firewall import block_ip, cleanup_expired_blocks, load_blocked_ips
 from alerting import log_traffic, log_alert
 from utils import load_config
-from db import get_connection, init_db
+from db import get_connection, init_db, update_service_heartbeat
+
+
+def start_block_maintenance(cfg, dry_run):
+    interval = max(1, cfg.get("block_maintenance_interval_seconds", 30))
+    stop_event = threading.Event()
+
+    def maintain_blocks():
+        while not stop_event.wait(interval):
+            maintenance_conn = get_connection(cfg["db_path"])
+            try:
+                init_db(maintenance_conn)
+                cleanup_expired_blocks(maintenance_conn, dry_run=dry_run)
+                update_service_heartbeat(maintenance_conn, "acf-engine")
+            except Exception as exc:
+                print(f"[main] Block maintenance failed: {exc}")
+            finally:
+                maintenance_conn.close()
+
+    thread = threading.Thread(target=maintain_blocks, name="block-maintenance", daemon=True)
+    thread.start()
+    return stop_event, thread
 
 
 def run_learn_mode(cfg, count):
@@ -220,6 +242,8 @@ def run_detect_mode(cfg):
     dry_run = cfg.get("dry_run", True)
     block_duration_seconds = cfg.get("block_duration_seconds")
     cleanup_expired_blocks(conn, dry_run=dry_run)
+    update_service_heartbeat(conn, "acf-engine")
+    maintenance_stop, maintenance_thread = start_block_maintenance(cfg, dry_run)
     already_alerted = load_blocked_ips(conn)  # don't re-alert on IPs already blocked from a prior run
     if already_alerted:
         print(f"[main] Loaded {len(already_alerted)} previously blocked IP(s) from database")
@@ -306,8 +330,13 @@ def run_detect_mode(cfg):
 
     mode_str = "DRY-RUN (no real blocking)" if dry_run else "LIVE (will modify iptables!)"
     print(f"[main] DETECT mode -- {mode_str}")
-    start_capture(cfg["interface"], cfg["bpf_filter"], handle, count=0)
-    conn.close()
+    try:
+        start_capture(cfg["interface"], cfg["bpf_filter"], handle, count=0)
+    finally:
+        maintenance_stop.set()
+        maintenance_thread.join(timeout=5)
+        update_service_heartbeat(conn, "acf-engine", status="stopped")
+        conn.close()
 
 
 if __name__ == "__main__":

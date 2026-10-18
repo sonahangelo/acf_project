@@ -16,6 +16,7 @@ REQUIRED_KEYS = {
 }
 
 OPTIONAL_NUMERIC_KEYS = [
+    "flush_every",
     "scan_window_seconds", "flow_timeout_seconds",
     "syn_window_seconds", "syn_flood_threshold",
     "port_repeat_window_seconds", "port_repeat_threshold",
@@ -26,9 +27,10 @@ OPTIONAL_NUMERIC_KEYS = [
     "icmp_window_seconds", "icmp_flood_threshold",
     "brute_force_threshold", "ttl_anomaly_threshold",
     "slowloris_min_duration_seconds", "slowloris_max_bps",
-    "slowloris_min_connections", "block_duration_seconds",
+    "slowloris_min_connections", "block_maintenance_interval_seconds",
 ]
 
+OPTIONAL_NULLABLE_NUMERIC_KEYS = ["block_duration_seconds"]
 OPTIONAL_LIST_KEYS = ["brute_force_ports", "threat_intel_files", "threat_intel_indicators"]
 
 
@@ -86,6 +88,12 @@ def validate_config(cfg, path="config.yml"):
         if key in cfg and not isinstance(cfg[key], (int, float)):
             errors.append(f"'{key}' should be a number, got {type(cfg[key]).__name__} ({cfg[key]!r})")
         elif key in cfg and cfg[key] < 0:
+            errors.append(f"'{key}' should not be negative, got {cfg[key]}")
+
+    for key in OPTIONAL_NULLABLE_NUMERIC_KEYS:
+        if key in cfg and cfg[key] is not None and not isinstance(cfg[key], (int, float)):
+            errors.append(f"'{key}' should be a number or null, got {type(cfg[key]).__name__} ({cfg[key]!r})")
+        elif key in cfg and cfg[key] is not None and cfg[key] < 0:
             errors.append(f"'{key}' should not be negative, got {cfg[key]}")
 
     if "contamination" in cfg and isinstance(cfg["contamination"], (int, float)):

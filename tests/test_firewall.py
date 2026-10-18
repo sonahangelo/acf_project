@@ -1,8 +1,10 @@
 import sys, os, sqlite3
+from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 from db import init_db
+import firewall
 from firewall import block_ip, unblock_ip, load_blocked_ips, cleanup_expired_blocks
 
 
@@ -63,3 +65,31 @@ def test_cleanup_expired_blocks_removes_old_rows(conn):
     conn.execute("UPDATE blocked_ips SET expires_at = 1 WHERE ip = ?", ("9.9.9.9",))
     cleanup_expired_blocks(conn, dry_run=True)
     assert "9.9.9.9" not in load_blocked_ips(conn)
+
+
+def test_container_firewall_commands_do_not_require_sudo(monkeypatch):
+    monkeypatch.setenv("ACF_FIREWALL_USE_SUDO", "false")
+    assert firewall._iptables_command("-L") == ["iptables", "-L"]
+
+
+def test_native_firewall_commands_require_sudo_by_default(monkeypatch):
+    monkeypatch.delenv("ACF_FIREWALL_USE_SUDO", raising=False)
+    assert firewall._iptables_command("-L") == ["sudo", "iptables", "-L"]
+
+
+def test_live_block_uses_dedicated_acf_chain(conn, monkeypatch):
+    calls = []
+
+    def fake_iptables(*args):
+        calls.append(args)
+        return SimpleNamespace(returncode=1 if args in {
+            ("-nL", firewall.FIREWALL_CHAIN),
+            ("-C", "INPUT", "-j", firewall.FIREWALL_CHAIN),
+        } else 0, stderr="")
+
+    monkeypatch.setattr(firewall, "_run_iptables", fake_iptables)
+    block_ip(conn, "1.2.3.4", dry_run=False)
+
+    assert ("-N", firewall.FIREWALL_CHAIN) in calls
+    assert ("-I", "INPUT", "1", "-j", firewall.FIREWALL_CHAIN) in calls
+    assert ("-A", firewall.FIREWALL_CHAIN, "-s", "1.2.3.4", "-j", "DROP") in calls

@@ -1,25 +1,54 @@
-version: '3.8'
 services:
   acf-engine:
     build: .
     network_mode: "host"
+    init: true
+    cap_drop:
+      - ALL
     cap_add:
       - NET_ADMIN
       - NET_RAW
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - ./data:/app/data
-      - ./models:/app/models
-      - ./config.yml:/app/config.yml
+      - ./models:/app/models:ro
+      - ./config.yml:/app/config.yml:ro
+    environment:
+      ACF_CONFIG: /app/config.yml
+      ACF_FIREWALL_USE_SUDO: "false"
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
   acf-dashboard:
     build: .
-    command: python3 app.py
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command: ["gunicorn", "--bind", "0.0.0.0:5050", "--workers", "${ACF_DASHBOARD_WORKERS:-2}", "--threads", "${ACF_DASHBOARD_THREADS:-4}", "--timeout", "30", "app:app"]
     environment:
       # Required for public deployments. Replace before running docker compose.
       ACF_DASHBOARD_PASSWORD: ${ACF_DASHBOARD_PASSWORD:?set ACF_DASHBOARD_PASSWORD}
+      ACF_CONFIG: /app/config.yml
     network_mode: "host"
     volumes:
       - ./data:/app/data
-      - ./models:/app/models
-      - ./config.yml:/app/config.yml
+      - ./models:/app/models:ro
+      - ./config.yml:/app/config.yml:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5050/readyz', timeout=2).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped

@@ -72,7 +72,9 @@ class AnomalyModel:
         print(f"[ai_model] Trained on {len(df)} rows, saved to {self.model_path}")
 
     def save(self):
-        os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
+        model_dir = os.path.dirname(self.model_path)
+        if model_dir:
+            os.makedirs(model_dir, exist_ok=True)
         joblib.dump({
             "model": self.model,
             "scaler": self.scaler,

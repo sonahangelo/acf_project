@@ -1,4 +1,3 @@
-import os
 import sqlite3
 import pytest
 import app as app_module
@@ -13,19 +12,72 @@ def auth_headers():
 
 
 @pytest.fixture
-def client():
+def client(tmp_path):
+    original_cfg = dict(app_module.cfg)
     app_module.app.config["TESTING"] = True
-    db_path = app_module.cfg.get("db_path", "data/acf.db")
-    db_dir = os.path.dirname(db_path)
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
+    app_module.cfg["db_path"] = str(tmp_path / "acf.db")
+    app_module._auth_failures.clear()
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(app_module.cfg["db_path"])
     init_db(conn)
     conn.close()
 
-    with app_module.app.test_client() as client:
-        yield client
+    try:
+        with app_module.app.test_client() as client:
+            yield client
+    finally:
+        app_module.cfg.clear()
+        app_module.cfg.update(original_cfg)
+        app_module.app.config["TESTING"] = False
+        app_module._auth_failures.clear()
+
+
+def test_healthz_endpoint_is_public(client):
+    response = client.get("/healthz")
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "ok"
+
+
+def test_readyz_endpoint_checks_database_without_auth(client):
+    response = client.get("/readyz")
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "ready"
+
+
+def test_authenticated_responses_include_security_headers(client):
+    response = client.get("/api/summary", headers=auth_headers())
+    assert response.status_code == 200
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert "default-src 'self'" in response.headers["Content-Security-Policy"]
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_metrics_requires_authentication(client):
+    response = client.get("/metrics")
+    assert response.status_code == 401
+
+
+def test_metrics_exposes_engine_and_storage_counts(client):
+    response = client.get("/metrics", headers=auth_headers())
+    assert response.status_code == 200
+    assert b"acf_traffic_rows_total" in response.data
+    assert b"acf_engine_active" in response.data
+
+
+def test_authentication_is_rate_limited(client, monkeypatch):
+    monkeypatch.setattr(app_module, "AUTH_MAX_ATTEMPTS", 1)
+    invalid_headers = {"Authorization": "Basic YWRtaW46aW5jb3JyZWN0"}
+
+    assert client.get("/api/summary", headers=invalid_headers).status_code == 401
+    assert client.get("/api/summary", headers=invalid_headers).status_code == 429
+
+
+def test_health_reports_engine_inactive_without_heartbeat(client):
+    response = client.get("/api/health", headers=auth_headers())
+    assert response.status_code == 200
+    assert response.get_json()["detect_service_status"] == "inactive"
 
 
 def test_summary_endpoint_returns_json(client):
@@ -49,8 +101,7 @@ def test_traffic_timeline_endpoint_returns_list(client):
 
 
 def test_mark_feedback_endpoint_sets_label(client):
-    db_path = app_module.cfg.get("db_path", "data/acf.db")
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(app_module.cfg["db_path"])
     conn.execute(
         "INSERT INTO alerts (src_ip, dst_ip, action, score) VALUES (?, ?, ?, ?)",
         ("9.9.9.9", "1.1.1.1", "BLOCK", -0.1),
@@ -99,8 +150,7 @@ def test_unblock_rejects_invalid_ip(client):
 
 
 def test_investigate_endpoint_returns_ip_context(client):
-    db_path = app_module.cfg.get("db_path", "data/acf.db")
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(app_module.cfg["db_path"])
     conn.execute(
         "INSERT INTO alerts (timestamp, src_ip, dst_ip, action, score, rule_reason, severity, mitre_technique, mitre_tactic) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (123.0, "8.8.8.8", "1.1.1.1", "BLOCK", -0.2, "brute_force test", "high", "T1110", "Credential Access"),

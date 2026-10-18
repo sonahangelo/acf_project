@@ -56,6 +56,7 @@ const CATEGORY_DESCRIPTIONS = {
 
 let searchDebounceTimer = null;
 let lastAlertsData = [];
+let lastAlertsById = new Map();
 let seenAlertIds = new Set();
 let firstAlertsLoad = true;
 let soundEnabled = true;
@@ -211,7 +212,9 @@ async function refreshHealth() {
   const dashOk = h.dashboard_service_status === "active";
 
   const dot = document.getElementById("healthDot");
+  const engineStatusText = document.getElementById("engineStatusText");
   dot.className = "health-dot " + (detectOk ? "health-ok" : "health-bad");
+  engineStatusText.textContent = detectOk ? "Engine active" : "Engine inactive";
 
   const captureAge = h.last_capture_ts ? (h.server_time - h.last_capture_ts) : null;
   const captureStale = captureAge !== null && captureAge > 60;
@@ -325,22 +328,28 @@ function openModal(alert) {
   const label = CATEGORY_LABELS[cat] || cat;
   const color = CATEGORY_COLORS[cat] || "#64748b";
   const feedback = alert.feedback || "none";
+  const score = Number(alert.score);
+  const scoreText = Number.isFinite(score) ? score.toFixed(4) : "-";
+  const alertId = escapeHTML(alert.id);
+  const srcIp = escapeHTML(alert.src_ip);
+  const dstIp = escapeHTML(alert.dst_ip);
+  const safeFeedback = escapeHTML(feedback);
 
   document.getElementById("modalBody").innerHTML = `
     <div class="modal-field"><span class="modal-field-label">Time</span><span>${formatTime(alert.timestamp)}</span></div>
-    <div class="modal-field"><span class="modal-field-label">Source</span><span>${alert.src_ip}</span></div>
-    <div class="modal-field"><span class="modal-field-label">Destination</span><span>${alert.dst_ip}</span></div>
+    <div class="modal-field"><span class="modal-field-label">Source</span><span>${srcIp}</span></div>
+    <div class="modal-field"><span class="modal-field-label">Destination</span><span>${dstIp}</span></div>
     <div class="modal-field"><span class="modal-field-label">Severity</span><span>${severityTag(alert.severity)}</span></div>
-    <div class="modal-field"><span class="modal-field-label">Score</span><span>${alert.score.toFixed(4)}</span></div>
-    <div class="modal-field"><span class="modal-field-label">Type</span><span><span class="type-dot" style="background:${color}"></span>${label}</span></div>
+    <div class="modal-field"><span class="modal-field-label">Score</span><span>${scoreText}</span></div>
+    <div class="modal-field"><span class="modal-field-label">Type</span><span><span class="type-dot" style="background:${color}"></span>${escapeHTML(label)}</span></div>
     <div class="modal-field"><span class="modal-field-label">MITRE</span><span>${escapeHTML(alert.mitre_technique || '-')} ${escapeHTML(alert.mitre_tactic || '')}</span></div>
-    <div class="modal-field-full"><span class="modal-field-label">Rule Reason</span><div class="modal-longtext">${alert.rule_reason || '(none -- flagged by ML model)'}</div></div>
-    <div class="modal-field-full"><span class="modal-field-label">Feature Explanation</span><div class="modal-longtext">${alert.top_reasons || '(not recorded)'}</div></div>
-    <div class="modal-field"><span class="modal-field-label">Feedback</span><span class="feedback-tag feedback-${feedback}">${feedback}</span></div>
+    <div class="modal-field-full"><span class="modal-field-label">Rule Reason</span><div class="modal-longtext">${escapeHTML(alert.rule_reason || '(none -- flagged by ML model)')}</div></div>
+    <div class="modal-field-full"><span class="modal-field-label">Feature Explanation</span><div class="modal-longtext">${escapeHTML(alert.top_reasons || '(not recorded)')}</div></div>
+    <div class="modal-field"><span class="modal-field-label">Feedback</span><span class="feedback-tag feedback-${safeFeedback}">${safeFeedback}</span></div>
     <div class="modal-actions">
-      <button class="action-btn" onclick="investigateIp('${escapeHTML(alert.src_ip)}')">Investigate Source</button>
-      <button class="action-btn action-btn-fp" onclick="markFeedback(${alert.id}, 'false_positive')">Mark False Positive</button>
-      <button class="action-btn action-btn-ct" onclick="markFeedback(${alert.id}, 'confirmed_threat')">Mark Confirmed Threat</button>
+      <button class="action-btn" data-action="investigate" data-ip="${srcIp}">Investigate Source</button>
+      <button class="action-btn action-btn-fp" data-action="feedback" data-alert-id="${alertId}" data-label="false_positive">Mark False Positive</button>
+      <button class="action-btn action-btn-ct" data-action="feedback" data-alert-id="${alertId}" data-label="confirmed_threat">Mark Confirmed Threat</button>
     </div>
   `;
   document.getElementById("alertModalOverlay").classList.remove("modal-hidden");
@@ -359,6 +368,7 @@ async function refreshAlerts() {
 
   const alerts = await fetchJSON("/api/alerts?" + params.toString());
   lastAlertsData = alerts;
+  lastAlertsById = new Map(alerts.map(a => [String(a.id), a]));
   const body = document.getElementById("alertsBody");
   if (alerts.length === 0) {
     body.innerHTML = '<tr><td colspan="9" class="empty">No alerts match these filters</td></tr>';
@@ -373,28 +383,32 @@ async function refreshAlerts() {
   firstAlertsLoad = false;
 
   body.innerHTML = alerts.map(a => {
-    const scoreClass = a.score < 0 ? "score-neg" : "score-pos";
+    const score = Number(a.score);
+    const scoreClass = score < 0 ? "score-neg" : "score-pos";
+    const scoreText = Number.isFinite(score) ? score.toFixed(3) : "-";
     const reason = a.rule_reason || a.top_reasons || "";
     const feedback = a.feedback || "none";
     const isNew = newIds.includes(a.id) ? "row-flash" : "";
+    const safeFeedback = escapeHTML(feedback);
+    const alertId = escapeHTML(a.id);
+    const srcIp = escapeHTML(a.src_ip);
 
     const fpActive = a.feedback === "false_positive" ? "action-btn-active" : "";
     const ctActive = a.feedback === "confirmed_threat" ? "action-btn-active" : "";
-    const alertJson = JSON.stringify(a).replace(/"/g, "&quot;");
 
-    return `<tr class="${isNew}" onclick="openModal(${alertJson})">
+    return `<tr class="${isNew}" data-alert-id="${alertId}">
       <td>${formatTime(a.timestamp)}</td>
-      <td>${escapeHTML(a.src_ip)}</td>
+      <td>${srcIp}</td>
       <td>${escapeHTML(a.dst_ip)}</td>
       <td>${severityTag(a.severity)}</td>
-      <td class="${scoreClass}"><span class="score-pill ${scoreClass}">${a.score.toFixed(3)}</span></td>
+      <td class="${scoreClass}"><span class="score-pill ${scoreClass}">${scoreText}</span></td>
       <td>${escapeHTML(a.mitre_technique || '-')}</td>
       <td>${escapeHTML(truncate(reason, 60))}</td>
-      <td><span class="feedback-tag feedback-${feedback}">${feedback}</span></td>
-      <td class="actions-cell" onclick="event.stopPropagation()">
-        <button class="action-btn" onclick="investigateIp('${escapeHTML(a.src_ip)}')">Investigate</button>
-        <button class="action-btn action-btn-fp ${fpActive}" onclick="markFeedback(${a.id}, 'false_positive')">FP</button>
-        <button class="action-btn action-btn-ct ${ctActive}" onclick="markFeedback(${a.id}, 'confirmed_threat')">Threat</button>
+      <td><span class="feedback-tag feedback-${safeFeedback}">${safeFeedback}</span></td>
+      <td class="actions-cell">
+        <button class="action-btn" data-action="investigate" data-ip="${srcIp}">Investigate</button>
+        <button class="action-btn action-btn-fp ${fpActive}" data-action="feedback" data-alert-id="${alertId}" data-label="false_positive">FP</button>
+        <button class="action-btn action-btn-ct ${ctActive}" data-action="feedback" data-alert-id="${alertId}" data-label="confirmed_threat">Threat</button>
       </td>
     </tr>`;
   }).join("");
@@ -415,7 +429,7 @@ async function refreshBreakdown() {
     const label = CATEGORY_LABELS[d.category] || d.category;
     const pct = (d.count / max) * 100;
     return `<div class="breakdown-row">
-      <div class="breakdown-label">${label}</div>
+      <div class="breakdown-label">${escapeHTML(label)}</div>
       <div class="breakdown-bar-track">
         <div class="breakdown-bar-fill" style="width:${pct}%;background:${color};"></div>
       </div>
@@ -446,13 +460,14 @@ async function refreshBlocklist() {
   }
   body.innerHTML = blocked.map(b => {
     const mode = b.dry_run ? "dry-run" : "LIVE";
+    const ip = escapeHTML(b.ip);
     return `<tr>
-      <td>${b.ip}</td>
+      <td>${ip}</td>
       <td>${formatTime(b.blocked_at)}</td>
       <td>${mode}</td>
       <td>${escapeHTML(truncate(b.reason || "", 60))}</td>
       <td>${b.expires_at ? formatTime(b.expires_at) : "Permanent"}</td>
-      <td><button class="action-btn" onclick="investigateIp('${escapeHTML(b.ip)}')">Investigate</button><button class="action-btn action-btn-unblock" onclick="unblockIp('${escapeHTML(b.ip)}')">Unblock</button></td>
+      <td><button class="action-btn" data-action="investigate" data-ip="${ip}">Investigate</button><button class="action-btn action-btn-unblock" data-action="unblock" data-ip="${ip}">Unblock</button></td>
     </tr>`;
   }).join("");
 }
@@ -467,15 +482,16 @@ async function refreshTopOffenders() {
   body.innerHTML = data.map(o => {
     const cat = categoryOf(o.last_reason);
     const label = CATEGORY_LABELS[cat] || cat;
+    const srcIp = escapeHTML(o.src_ip);
     const statusBadge = o.is_blocked
       ? '<span class="feedback-tag feedback-confirmed_threat">blocked</span>'
       : '<span class="feedback-tag feedback-none">not blocked</span>';
     return `<tr>
-      <td>${escapeHTML(o.src_ip)}</td>
+      <td>${srcIp}</td>
       <td>${o.alert_count}</td>
       <td>${formatTime(o.last_seen)}</td>
       <td>${escapeHTML(truncate(label + (o.last_reason ? ': ' + o.last_reason : ''), 50))}</td>
-      <td>${severityTag(o.severity)} ${statusBadge} <button class="action-btn" onclick="investigateIp('${escapeHTML(o.src_ip)}')">Investigate</button></td>
+      <td>${severityTag(o.severity)} ${statusBadge} <button class="action-btn" data-action="investigate" data-ip="${srcIp}">Investigate</button></td>
     </tr>`;
   }).join("");
 }
@@ -527,8 +543,10 @@ async function refreshTimeline() {
 async function refreshAll() {
   try {
     await Promise.all([refreshSummary(), refreshHealth(), refreshAlerts(), refreshBreakdown(), refreshBlocklist(), refreshTimeline(), refreshTopOffenders()]);
+    document.getElementById("refreshState").textContent = "Updated " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   } catch (e) {
     console.error("Refresh failed:", e);
+    document.getElementById("refreshState").textContent = "Refresh unavailable";
   }
 }
 
@@ -560,9 +578,47 @@ document.querySelectorAll(".range-btn").forEach(btn => {
 });
 document.getElementById("soundToggle").addEventListener("click", () => {
   soundEnabled = !soundEnabled;
-  document.getElementById("soundToggle").textContent = soundEnabled ? "🔔" : "🔕";
+  document.getElementById("soundToggle").textContent = soundEnabled ? "Sound on" : "Sound off";
+  document.getElementById("soundToggle").setAttribute("aria-label", soundEnabled ? "Mute alert sound" : "Enable alert sound");
   showToast(soundEnabled ? "Alert sound on" : "Alert sound off", "info");
 });
 
+document.addEventListener("click", (event) => {
+  const actionEl = event.target.closest("[data-action]");
+  if (actionEl) {
+    event.stopPropagation();
+    const action = actionEl.dataset.action;
+    if (action === "investigate") {
+      investigateIp(actionEl.dataset.ip || "");
+    } else if (action === "unblock") {
+      unblockIp(actionEl.dataset.ip || "");
+    } else if (action === "feedback") {
+      markFeedback(Number(actionEl.dataset.alertId), actionEl.dataset.label || null);
+    }
+    return;
+  }
+
+  const alertRow = event.target.closest("tr[data-alert-id]");
+  const alertsBody = document.getElementById("alertsBody");
+  if (alertRow && alertsBody && alertsBody.contains(alertRow)) {
+    const alert = lastAlertsById.get(alertRow.dataset.alertId);
+    if (alert) openModal(alert);
+  }
+});
+
+function setupAlertStream() {
+  if (!window.EventSource) return;
+  const eventSource = new EventSource("/api/stream-alerts");
+  eventSource.onmessage = (event) => {
+    if (event.data === "update") {
+      refreshAll();
+    }
+  };
+  eventSource.onerror = () => {
+    console.warn("SSE connection lost; polling remains active.");
+  };
+}
+
+setupAlertStream();
 refreshAll();
 setInterval(refreshAll, REFRESH_MS);

@@ -6,6 +6,7 @@ import os
 import secrets
 import sqlite3
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from ipaddress import ip_address
@@ -16,18 +17,23 @@ from werkzeug.exceptions import BadRequest
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from utils import load_config
+from db import get_connection, init_db
 from detection_metadata import categorize_reason, mitre_for_category
 from firewall import cleanup_expired_blocks, unblock_ip
 
 app = Flask(__name__)
 auth = HTTPBasicAuth()
 
+CONFIG_PATH = os.environ.get("ACF_CONFIG", "config.yml")
 DEFAULT_DASHBOARD_PASSWORD = "acfpassword123"
 DASHBOARD_USER = os.environ.get("ACF_DASHBOARD_USER", "admin")
 DASHBOARD_PASSWORD = os.environ.get("ACF_DASHBOARD_PASSWORD")
 DASHBOARD_PASSWORD_HASH = os.environ.get("ACF_DASHBOARD_PASSWORD_HASH")
 ALLOW_DEFAULT_PASSWORD = os.environ.get("ACF_ALLOW_DEFAULT_PASSWORD", "").lower() in ("1", "true", "yes")
 CSRF_TOKEN = os.environ.get("ACF_CSRF_TOKEN") or secrets.token_urlsafe(32)
+FORCE_HTTPS = os.environ.get("ACF_FORCE_HTTPS", "").lower() in ("1", "true", "yes")
+_auth_failures = {}
+_auth_lock = threading.Lock()
 
 if DASHBOARD_PASSWORD_HASH:
     _dashboard_password_hash = DASHBOARD_PASSWORD_HASH
@@ -42,22 +48,67 @@ USERS = {DASHBOARD_USER: _dashboard_password_hash}
 def using_insecure_default_password():
     return not (DASHBOARD_PASSWORD or DASHBOARD_PASSWORD_HASH or ALLOW_DEFAULT_PASSWORD)
 
+
+def _client_ip():
+    return request.remote_addr or "unknown"
+
+
+def _auth_rate_limited(client_ip):
+    now = time.monotonic()
+    with _auth_lock:
+        attempts = [ts for ts in _auth_failures.get(client_ip, []) if now - ts < AUTH_WINDOW_SECONDS]
+        if attempts:
+            _auth_failures[client_ip] = attempts
+        else:
+            _auth_failures.pop(client_ip, None)
+        return len(attempts) >= AUTH_MAX_ATTEMPTS
+
+
 @auth.verify_password
 def verify_password(username, password):
+    client_ip = _client_ip()
+    if _auth_rate_limited(client_ip):
+        return None
     if username in USERS and check_password_hash(USERS.get(username), password):
+        with _auth_lock:
+            _auth_failures.pop(client_ip, None)
         return username
 
-cfg = load_config("config.yml")
+
+@auth.error_handler
+def unauthorized():
+    client_ip = _client_ip()
+    if _auth_rate_limited(client_ip):
+        return jsonify({"error": "too many login attempts; try again later"}), 429
+    with _auth_lock:
+        _auth_failures.setdefault(client_ip, []).append(time.monotonic())
+    return jsonify({"error": "authentication required"}), 401
+
+cfg = load_config(CONFIG_PATH)
 _dashboard_start_time = time.time()
+
 
 def get_db():
     db_path = cfg.get("db_path", "data/acf.db")
-    db_dir = os.path.dirname(db_path)
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = get_connection(db_path)
     conn.row_factory = sqlite3.Row
+    init_db(conn)
     return conn
+
+
+def env_int(name, default):
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer, got {raw!r}") from exc
+
+
+AUTH_WINDOW_SECONDS = env_int("ACF_AUTH_WINDOW_SECONDS", 900)
+AUTH_MAX_ATTEMPTS = env_int("ACF_AUTH_MAX_ATTEMPTS", 10)
+
     
 def categorize(rule_reason):
     category = categorize_reason(rule_reason)
@@ -66,6 +117,9 @@ def categorize(rule_reason):
 
 @app.before_request
 def enforce_dashboard_security():
+    if request.path in ("/healthz", "/readyz"):
+        return None
+
     if using_insecure_default_password() and not app.config.get("TESTING"):
         return jsonify({
             "error": "dashboard credentials are not configured",
@@ -76,6 +130,32 @@ def enforce_dashboard_security():
         token = request.headers.get("X-ACF-CSRF-Token")
         if not secrets.compare_digest(token or "", CSRF_TOKEN):
             return jsonify({"error": "missing or invalid CSRF token"}), 403
+
+
+@app.after_request
+def set_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "frame-ancestors 'none'; "
+        "form-action 'self'",
+    )
+    if request.path == "/" or request.path.startswith("/api/") or request.path == "/metrics":
+        response.headers.setdefault("Cache-Control", "no-store")
+    if request.is_secure or FORCE_HTTPS:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
 
 
 def parse_int_arg(name, default, minimum, maximum):
@@ -142,10 +222,47 @@ def check_service_status(service_name):
         return "unknown"
 
 
+def engine_service_status(conn):
+    row = conn.execute(
+        "SELECT last_heartbeat, status FROM service_heartbeats WHERE service = ?",
+        ("acf-engine",),
+    ).fetchone()
+    if not row or row["status"] != "active":
+        return "inactive"
+
+    max_age = cfg.get("block_maintenance_interval_seconds", 30) * 2 + 5
+    return "active" if time.time() - row["last_heartbeat"] <= max_age else "inactive"
+
+
 @app.route("/")
 @auth.login_required
 def index():
     return render_template("dashboard.html", csrf_token=CSRF_TOKEN)
+
+
+@app.route("/healthz")
+def healthz():
+    return jsonify({
+        "status": "ok",
+        "service": "acf-dashboard",
+        "server_time": time.time(),
+    })
+
+
+@app.route("/readyz")
+def readyz():
+    try:
+        conn = get_db()
+        conn.execute("SELECT 1").fetchone()
+        conn.close()
+    except sqlite3.Error:
+        return jsonify({"status": "unavailable", "service": "acf-dashboard"}), 503
+
+    return jsonify({
+        "status": "ready",
+        "service": "acf-dashboard",
+        "server_time": time.time(),
+    })
 
 
 @app.route("/api/summary")
@@ -173,14 +290,32 @@ def api_summary():
     })
 
 
-def get_db():
-    db_path = cfg.get("db_path", "data/acf.db")
-    db_dir = os.path.dirname(db_path)
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    return conn
+@app.route("/metrics")
+@auth.login_required
+def metrics():
+    conn = get_db()
+    traffic_count = conn.execute("SELECT COUNT(*) FROM traffic").fetchone()[0]
+    alert_count = conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
+    blocked_count = conn.execute("SELECT COUNT(*) FROM blocked_ips").fetchone()[0]
+    engine_active = engine_service_status(conn) == "active"
+    conn.close()
+
+    body = "\n".join([
+        "# HELP acf_traffic_rows_total Total traffic records retained by ACF.",
+        "# TYPE acf_traffic_rows_total gauge",
+        f"acf_traffic_rows_total {traffic_count}",
+        "# HELP acf_alerts_total Total alerts retained by ACF.",
+        "# TYPE acf_alerts_total gauge",
+        f"acf_alerts_total {alert_count}",
+        "# HELP acf_blocked_ips Total currently persisted ACF blocks.",
+        "# TYPE acf_blocked_ips gauge",
+        f"acf_blocked_ips {blocked_count}",
+        "# HELP acf_engine_active Whether the detection engine heartbeat is current.",
+        "# TYPE acf_engine_active gauge",
+        f"acf_engine_active {1 if engine_active else 0}",
+        "",
+    ])
+    return Response(body, mimetype="text/plain; version=0.0.4; charset=utf-8")
 
 
 @app.route("/api/health")
@@ -188,6 +323,7 @@ def get_db():
 def api_health():
     conn = get_db()
     last_capture_ts = conn.execute("SELECT MAX(timestamp) FROM traffic").fetchone()[0]
+    detect_service_status = engine_service_status(conn)
     conn.close()
 
     model_path = cfg.get("model_path", "models/anomaly_model.pkl")
@@ -201,8 +337,8 @@ def api_health():
         db_size_bytes = os.path.getsize(db_path)
 
     return jsonify({
-        "detect_service_status": check_service_status("acf-detect.service"),
-        "dashboard_service_status": check_service_status("acf-dashboard.service"),
+        "detect_service_status": detect_service_status,
+        "dashboard_service_status": "active",
         "dashboard_uptime_seconds": round(time.time() - _dashboard_start_time),
         "model_last_trained": model_last_trained,
         "last_capture_ts": last_capture_ts,
@@ -304,15 +440,9 @@ def stream_alerts():
 @app.route("/api/status")
 @auth.login_required
 def api_status():
-    detection_active = False
-    try:
-        output = subprocess.check_output(["ps", "aux"]).decode("utf-8")
-        for line in output.splitlines():
-            if "main.py" in line and "--mode detect" in line and "grep" not in line:
-                detection_active = True
-                break
-    except Exception:
-        detection_active = False
+    conn = get_db()
+    detection_active = engine_service_status(conn) == "active"
+    conn.close()
 
     return jsonify({
         "status": "Active" if detection_active else "Inactive",
@@ -629,4 +759,4 @@ th {{ background: #e5e7eb; text-align: left; }}
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5050, debug=False)
+    app.run(host=os.environ.get("ACF_HOST", "0.0.0.0"), port=env_int("ACF_PORT", 5050), debug=False)

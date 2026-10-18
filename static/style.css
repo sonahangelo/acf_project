@@ -1,12 +1,14 @@
 :root {
-  --bg: #0b0f14;
-  --panel: #121821;
-  --border: #1f2937;
-  --text: #cbd5e1;
-  --muted: #64748b;
-  --safe: #22c55e;
-  --warn: #eab308;
-  --danger: #ef4444;
+  --bg: #0a0f16;
+  --panel: #111923;
+  --panel-raised: #16212d;
+  --border: #263445;
+  --border-strong: #3a4b60;
+  --text: #e5edf5;
+  --muted: #92a1b4;
+  --safe: #34d399;
+  --warn: #fbbf24;
+  --danger: #fb7185;
   --info: #38bdf8;
 }
 
@@ -18,17 +20,18 @@ body {
   font-family: 'Inter', -apple-system, sans-serif;
   margin: 0;
   min-height: 100vh;
+  line-height: 1.4;
 }
 
 .topbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px 32px;
+  padding: 14px 32px;
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
-  background: rgba(11, 15, 20, 0.92);
+  background: rgba(10, 15, 22, 0.96);
   backdrop-filter: blur(6px);
   z-index: 10;
 }
@@ -36,7 +39,7 @@ body {
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .brand-icon {
@@ -47,13 +50,14 @@ body {
 .brand-mark {
   font-family: 'JetBrains Mono', monospace;
   font-weight: 700;
-  font-size: 22px;
-  letter-spacing: 0.5px;
+  font-size: 20px;
+  letter-spacing: 0;
   color: var(--info);
 }
 
 .brand-sub {
-  font-size: 13px;
+  display: block;
+  font-size: 11px;
   color: var(--muted);
   margin-left: 2px;
 }
@@ -62,7 +66,7 @@ body {
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
   font-weight: 500;
-  padding: 6px 14px;
+  padding: 5px 10px;
   border-radius: 4px;
   border: 1px solid var(--border);
   text-transform: uppercase;
@@ -73,13 +77,24 @@ body {
 .mode-indicator.live { color: var(--danger); border-color: var(--danger); }
 
 .grid {
-  max-width: 1200px;
+  max-width: 1440px;
   margin: 0 auto;
   padding: 28px 24px 60px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 18px;
 }
+
+.command-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 0 2px;
+}
+.command-strip strong { display: block; font-size: 16px; font-weight: 600; }
+.command-label { display: block; color: var(--info); font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.refresh-state { color: var(--muted); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
 
 .stat-row {
   display: grid;
@@ -91,44 +106,44 @@ body {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 18px 20px;
+  padding: 16px 18px;
+  border-top: 2px solid var(--border-strong);
   transition: border-color 0.2s ease;
 }
 
 .stat-card:hover {
-  border-color: #2d3a4d;
+  border-color: var(--info);
 }
 
 .stat-label {
   font-size: 12px;
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.6px;
+  letter-spacing: .05em;
   margin-bottom: 8px;
 }
 
 .stat-value {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 28px;
+  font-size: 30px;
   font-weight: 700;
   color: var(--text);
 }
 
 .two-col {
-  display: grid;
-  grid-template-columns: 1.4fr 1fr;
-  gap: 24px;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 1fr);
+  gap: 18px;
 }
 
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 6px;
   overflow: hidden;
 }
 
 .panel-header {
-  padding: 16px 20px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -141,7 +156,7 @@ body {
 }
 
 .panel-header h2 {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   margin: 0;
   color: var(--text);
@@ -154,21 +169,23 @@ body {
 }
 
 .filter-input, .filter-select {
-  background: var(--bg);
+  background: #0c131c;
   border: 1px solid var(--border);
   border-radius: 5px;
   color: var(--text);
   font-family: 'Inter', sans-serif;
   font-size: 12.5px;
-  padding: 7px 10px;
+  min-height: 32px;
+  padding: 6px 9px;
 }
 
 .filter-input {
   width: 180px;
 }
 
-.filter-input:focus, .filter-select:focus {
-  outline: none;
+.filter-input:focus, .filter-select:focus, button:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 2px;
   border-color: var(--info);
 }
 
@@ -229,7 +246,8 @@ table {
 
 th {
   text-align: left;
-  padding: 10px 20px;
+  padding: 10px 18px;
+  background: #0d151f;
   color: var(--muted);
   font-weight: 500;
   text-transform: uppercase;
@@ -240,7 +258,7 @@ th {
 }
 
 td {
-  padding: 10px 20px;
+  padding: 11px 18px;
   border-bottom: 1px solid var(--border);
   font-family: 'JetBrains Mono', monospace;
   font-size: 12.5px;
@@ -251,7 +269,7 @@ tbody tr {
 }
 
 tbody tr:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(56, 189, 248, 0.06);
 }
 
 tr:last-child td { border-bottom: none; }
@@ -289,7 +307,8 @@ tr:last-child td { border-bottom: none; }
   font-family: 'Inter', sans-serif;
   font-size: 11px;
   font-weight: 600;
-  padding: 4px 10px;
+  min-height: 28px;
+  padding: 4px 9px;
   border-radius: 4px;
   border: 1px solid var(--border);
   background: transparent;
@@ -381,14 +400,15 @@ tr:last-child td { border-bottom: none; }
 .health-warn { color: var(--warn); }
 
 .filter-btn {
-  background: var(--bg);
+  background: #0c131c;
   border: 1px solid var(--border);
   border-radius: 5px;
   color: var(--text);
   font-family: 'Inter', sans-serif;
   font-size: 12px;
   font-weight: 500;
-  padding: 7px 12px;
+  min-height: 32px;
+  padding: 6px 10px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -436,11 +456,12 @@ tr:last-child td { border-bottom: none; }
 .toast-error { border-color: var(--danger); }
 
 .icon-btn {
-  background: transparent;
+  background: #0c131c;
   border: 1px solid var(--border);
   border-radius: 5px;
   color: var(--text);
   font-size: 14px;
+  min-height: 30px;
   padding: 5px 9px;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -509,7 +530,7 @@ tbody tr {
 .modal-box {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 6px;
   width: min(600px, 90vw);
   max-height: 85vh;
   overflow-y: auto;

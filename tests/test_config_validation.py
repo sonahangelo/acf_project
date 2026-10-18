@@ -48,6 +48,17 @@ def test_negative_threshold_is_caught(capsys):
     assert "syn_flood_threshold" in capsys.readouterr().err
 
 
+def test_block_duration_allows_null_for_permanent_blocks():
+    validate_config(_valid_cfg(block_duration_seconds=None))
+
+
+def test_flush_every_type_is_validated(capsys):
+    cfg = _valid_cfg(flush_every="twenty")
+    with pytest.raises(SystemExit):
+        validate_config(cfg)
+    assert "flush_every" in capsys.readouterr().err
+
+
 def test_non_string_whitelist_entry_is_caught(capsys):
     cfg = _valid_cfg(whitelist=["127.0.0.1", 42])
     with pytest.raises(SystemExit):

@@ -1,0 +1,22 @@
+[Unit]
+Description=Adaptive Cognitive Firewall dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=acf
+Group=acf
+WorkingDirectory=/opt/acf
+EnvironmentFile=/etc/acf/dashboard.env
+ExecStart=/opt/acf/acf-env/bin/gunicorn --bind 127.0.0.1:5050 --workers 2 --threads 4 --timeout 30 app:app
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/acf/data
+
+[Install]
+WantedBy=multi-user.target

@@ -5,7 +5,9 @@ Replaces the CSV logging from earlier in the project. Same data, but
 indexed, atomic, and scales far better once you're logging continuously.
 """
 
+import os
 import sqlite3
+import time
 
 TRAFFIC_COLUMNS = [
     "timestamp", "src_ip", "dst_ip", "src_port", "dst_port", "protocol",
@@ -18,9 +20,16 @@ TRAFFIC_COLUMNS = [
 ALERT_EXTRA_COLUMNS = ["action", "score", "top_reasons", "rule_reason", "severity", "mitre_technique", "mitre_tactic"]
 
 
-def get_connection(db_path):
-    conn = sqlite3.connect(db_path, check_same_thread=False)
+def get_connection(db_path, timeout=30):
+    db_dir = os.path.dirname(db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
+    conn = sqlite3.connect(db_path, check_same_thread=False, timeout=timeout)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.isolation_level = None
     return conn
 
@@ -57,6 +66,16 @@ def init_db(conn):
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_src_ip ON alerts(src_ip)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_src_ip_timestamp ON alerts(src_ip, timestamp)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_blocked_ips_expires_at ON blocked_ips(expires_at)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS service_heartbeats (
+            service TEXT PRIMARY KEY,
+            last_heartbeat REAL NOT NULL,
+            status TEXT NOT NULL
+        )
+    """)
 
     # Add columns if they do not exist yet (safe to run repeatedly).
     existing_cols = [row[1] for row in conn.execute("PRAGMA table_info(alerts)").fetchall()]
@@ -75,4 +94,12 @@ def insert_row(conn, table, row_dict):
     conn.execute(
         f'INSERT INTO {table} ({col_sql}) VALUES ({placeholders})',
         [row_dict[c] for c in cols],
+    )
+
+
+def update_service_heartbeat(conn, service, status="active"):
+    conn.execute(
+        "INSERT INTO service_heartbeats (service, last_heartbeat, status) VALUES (?, ?, ?) "
+        "ON CONFLICT(service) DO UPDATE SET last_heartbeat = excluded.last_heartbeat, status = excluded.status",
+        (service, time.time(), status),
     )

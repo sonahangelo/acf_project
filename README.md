@@ -27,6 +27,45 @@ sha256sum models/anomaly_model.pkl
 
 5. For Docker deployments, provide `ACF_DASHBOARD_PASSWORD` in the environment before running `docker compose up`. The compose file intentionally fails closed if it is missing.
 
+## Production deployment
+
+The Docker deployment separates the privileged detection engine from the dashboard. Only the engine receives packet-capture capabilities; both services drop every other Linux capability, prevent privilege escalation, and rotate container logs. The dashboard runs under Gunicorn, mounts the trained model and configuration read-only, and exposes `/healthz` for liveness plus `/readyz` for database readiness.
+
+```bash
+cp .env.example .env
+# Edit .env and set ACF_DASHBOARD_PASSWORD to a long, unique value.
+docker compose up -d --build
+docker compose ps
+```
+
+Deploy the dashboard behind a TLS-terminating reverse proxy. Set `ACF_FORCE_HTTPS=true` only when every request reaches the dashboard through HTTPS; this enables HSTS responses. The dashboard accepts `ACF_CONFIG`, `ACF_HOST`, and `ACF_PORT` when it is run outside Compose.
+
+Keep `config.yml`, `.env`, the SQLite database, and the trained model in backups with restricted access. After retraining, calculate the model checksum and set `model_sha256` in `config.yml` before deploying it:
+
+```bash
+sha256sum models/anomaly_model.pkl
+```
+
+Temporary live blocks are removed by the detection engine every `block_maintenance_interval_seconds` (30 seconds by default). Docker uses its narrowly scoped `NET_ADMIN` capability for `iptables`; native deployments retain the existing `sudo` behavior.
+
+### Systemd deployment
+
+The tracked unit templates in `deploy/systemd/` run the dashboard through Gunicorn, bind it to loopback for a reverse proxy, drop unneeded privileges, and use a protected environment file for dashboard credentials. They assume the application is deployed at `/opt/acf`, with writable SQLite data at `/opt/acf/data`.
+
+```bash
+sudo useradd --system --home /opt/acf --shell /usr/sbin/nologin acf
+sudo chown -R acf:acf /opt/acf
+sudo install -d -m 0750 -o acf -g acf /etc/acf /opt/acf/data
+sudo install -m 0644 deploy/systemd/acf-dashboard.service /etc/systemd/system/
+sudo install -m 0644 deploy/systemd/acf-detect.service /etc/systemd/system/
+sudo install -m 0640 -o root -g acf deploy/systemd/dashboard.env.example /etc/acf/dashboard.env
+sudoedit /etc/acf/dashboard.env
+sudo systemctl daemon-reload
+sudo systemctl enable --now acf-dashboard.service acf-detect.service
+```
+
+Use `ACF_DASHBOARD_PASSWORD_HASH` rather than a plaintext password. The authenticated `/metrics` endpoint exposes retained traffic, alert, block, and engine-heartbeat gauges for a monitoring system.
+
 ## Setup: avoiding sudo for capture
 
 Packet capture requires raw socket access. Rather than granting this to the

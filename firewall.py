@@ -6,9 +6,37 @@ no duplicate iptables rules after a restart, and no re-alerting on IPs
 already known to be blocked.
 """
 
+import os
 import subprocess
 import time
 from ipaddress import ip_address
+
+FIREWALL_CHAIN = "ACF_BLOCK"
+
+
+def _iptables_command(*args):
+    use_sudo = os.environ.get("ACF_FIREWALL_USE_SUDO", "true").lower() in ("1", "true", "yes")
+    prefix = ["sudo"] if use_sudo else []
+    return [*prefix, "iptables", *args]
+
+
+def _run_iptables(*args):
+    return subprocess.run(_iptables_command(*args), capture_output=True, text=True)
+
+
+def _ensure_firewall_chain():
+    chain_check = _run_iptables("-nL", FIREWALL_CHAIN)
+    if chain_check.returncode != 0:
+        create_chain = _run_iptables("-N", FIREWALL_CHAIN)
+        if create_chain.returncode != 0:
+            return False, create_chain.stderr.strip()
+
+    jump_check = _run_iptables("-C", "INPUT", "-j", FIREWALL_CHAIN)
+    if jump_check.returncode != 0:
+        insert_jump = _run_iptables("-I", "INPUT", "1", "-j", FIREWALL_CHAIN)
+        if insert_jump.returncode != 0:
+            return False, insert_jump.stderr.strip()
+    return True, ""
 
 
 def load_blocked_ips(conn):
@@ -28,8 +56,7 @@ def cleanup_expired_blocks(conn, dry_run=True):
     ).fetchall()
     for ip, row_dry_run in rows:
         if not dry_run and not row_dry_run:
-            cmd = ["sudo", "iptables", "-D", "INPUT", "-s", ip, "-j", "DROP"]
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = _run_iptables("-D", FIREWALL_CHAIN, "-s", ip, "-j", "DROP")
             if result.returncode != 0:
                 print(f"[firewall] FAILED to expire block for {ip}: {result.stderr.strip()}")
                 continue
@@ -51,10 +78,13 @@ def block_ip(conn, ip, dry_run=True, reason="", duration_seconds=None):
         return  # already recorded as blocked, avoid duplicate rules
 
     if dry_run:
-        print(f"[firewall][DRY-RUN] Would block {ip} (iptables -A INPUT -s {ip} -j DROP)")
+        print(f"[firewall][DRY-RUN] Would block {ip} in {FIREWALL_CHAIN}")
     else:
-        cmd = ["sudo", "iptables", "-A", "INPUT", "-s", ip, "-j", "DROP"]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        chain_ready, error = _ensure_firewall_chain()
+        if not chain_ready:
+            print(f"[firewall] FAILED to prepare {FIREWALL_CHAIN}: {error}")
+            return
+        result = _run_iptables("-A", FIREWALL_CHAIN, "-s", ip, "-j", "DROP")
         if result.returncode != 0:
             print(f"[firewall] FAILED to block {ip}: {result.stderr.strip()}")
             return
@@ -70,8 +100,7 @@ def block_ip(conn, ip, dry_run=True, reason="", duration_seconds=None):
 def unblock_ip(conn, ip, dry_run=True):
     ip = _normalize_ip(ip)
     if not dry_run:
-        cmd = ["sudo", "iptables", "-D", "INPUT", "-s", ip, "-j", "DROP"]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = _run_iptables("-D", FIREWALL_CHAIN, "-s", ip, "-j", "DROP")
         if result.returncode != 0:
             print(f"[firewall] FAILED to unblock {ip}: {result.stderr.strip()}")
             return
